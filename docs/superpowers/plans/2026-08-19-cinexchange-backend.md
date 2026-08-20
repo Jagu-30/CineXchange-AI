@@ -4313,9 +4313,6 @@ async def trace(production_id: uuid.UUID, _: Producer = Depends(require_producer
     """Every agent decision for this production, in order. The answer to
     'prove this isn't scripted'."""
     async with session_scope() as session:
-        requirement_ids = (await session.execute(
-            select(AuditLog.entity_id).where(AuditLog.entity_type == "requirement")
-        )).scalars().all()
         rows = (await session.execute(
             select(AuditLog).where(
                 (AuditLog.entity_id == production_id)
@@ -4378,12 +4375,7 @@ async def decide(
 Run: `uv run pytest tests/test_orchestrator_api.py -v -m integration`
 Expected: PASS, 8 tests
 
-- [ ] **Step 5: Remove the unused variable flagged by the trace query**
-
-The `requirement_ids` binding in `trace()` is dead. Delete those three lines and re-run the tests
-to confirm nothing depended on it.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add services/orchestrator/main.py tests/test_orchestrator_api.py
