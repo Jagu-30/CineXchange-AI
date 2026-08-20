@@ -1,3 +1,4 @@
+from decimal import Decimal
 import pytest
 from cinex.config import Settings
 
@@ -17,7 +18,8 @@ def test_demo_defaults():
     assert s.negotiation_max_rounds == 3
     assert s.approval_threshold_pct == 10.0
     assert s.vendor_timeout_s == 5.0
-    assert s.insurance_rider_threshold == 50000
+    assert s.insurance_rider_threshold == Decimal("50000")
+    assert isinstance(s.insurance_rider_threshold, Decimal), "money is Decimal, never float"
 
 
 def test_agent_urls_are_configurable():

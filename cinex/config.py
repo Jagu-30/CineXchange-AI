@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     negotiation_max_rounds: int = 3
     vendor_timeout_s: float = 5.0
     llm_timeout_s: float = 30.0
-    insurance_rider_threshold: float = 50000
+    insurance_rider_threshold: Decimal = Decimal("50000")
 
     producer_agent_url: str = "http://producer-agent:8001/mcp"
     scout_agent_url: str = "http://scout-agent:8002/mcp"
