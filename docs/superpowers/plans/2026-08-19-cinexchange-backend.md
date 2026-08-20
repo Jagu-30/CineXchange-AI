@@ -143,7 +143,10 @@ Pick the current fast general-purpose model. Write that exact id into `.env.exam
 
 ```python
 # tests/test_config.py
+from decimal import Decimal
+
 import pytest
+
 from cinex.config import Settings
 
 
@@ -162,7 +165,8 @@ def test_demo_defaults():
     assert s.negotiation_max_rounds == 3
     assert s.approval_threshold_pct == 10.0
     assert s.vendor_timeout_s == 5.0
-    assert s.insurance_rider_threshold == 50000
+    assert s.insurance_rider_threshold == Decimal("50000")
+    assert isinstance(s.insurance_rider_threshold, Decimal), "money is Decimal, never float"
 
 
 def test_agent_urls_are_configurable():
@@ -185,6 +189,7 @@ Expected: FAIL, `ModuleNotFoundError: No module named 'cinex.config'`
 
 ```python
 # cinex/config.py
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -207,7 +212,7 @@ class Settings(BaseSettings):
     negotiation_max_rounds: int = 3
     vendor_timeout_s: float = 5.0
     llm_timeout_s: float = 30.0
-    insurance_rider_threshold: float = 50000
+    insurance_rider_threshold: Decimal = Decimal("50000")
 
     producer_agent_url: str = "http://producer-agent:8001/mcp"
     scout_agent_url: str = "http://scout-agent:8002/mcp"
@@ -3495,7 +3500,7 @@ async def _check_compliance(production_id: str) -> dict:
 
         results = [
             check_permit(production.location, production.start_date, production.end_date, categories),
-            check_insurance(equipment_value, Decimal(str(settings.insurance_rider_threshold))),
+            check_insurance(equipment_value, settings.insurance_rider_threshold),
             check_licensing(crew_specs),
         ]
 
@@ -5101,7 +5106,7 @@ async def _recover(production_id: str, booking_id: str, trigger: str) -> dict:
         # 5 - insurance and logistics records against the new vendor
         permit = check_permit(production.location, production.start_date,
                               production.end_date, {requirement.category})
-        insurance = check_insurance(new_total, Decimal(str(settings.insurance_rider_threshold)))
+        insurance = check_insurance(new_total, settings.insurance_rider_threshold)
         from cinex.db.models import ComplianceCheck
         for result in (permit, insurance):
             session.add(ComplianceCheck(production_id=pid, booking_id=new_booking.id,

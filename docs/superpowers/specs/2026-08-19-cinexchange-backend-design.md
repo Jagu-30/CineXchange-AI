@@ -429,7 +429,7 @@ trace in one payload.
 | `NEGOTIATION_MAX_ROUNDS` | `3` | frozen at 3 for the demo |
 | `VENDOR_TIMEOUT_S` | `5` | per vendor HTTP call |
 | `LLM_TIMEOUT_S` | `30` | per Gemini call |
-| `INSURANCE_RIDER_THRESHOLD` | `50000` | compliance rule |
+| `INSURANCE_RIDER_THRESHOLD` | `50000` | compliance rule; parsed as `Decimal` |
 | `SERVICE` | none | selects the entrypoint in the shared image |
 | `DATABASE_URL`, `CLICKHOUSE_URL`, `JWT_SECRET` | none | infra |
 
