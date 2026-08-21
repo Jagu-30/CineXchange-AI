@@ -8,6 +8,7 @@ import {
   Handshake,
   ShieldCheck,
   Siren,
+  Cpu,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -17,6 +18,7 @@ const ICONS: Record<Agent['id'], LucideIcon> = {
   negotiation: Handshake,
   compliance: ShieldCheck,
   recovery: Siren,
+  policy_engine: Cpu,
 };
 
 const STATUS_CONFIG: Record<
@@ -67,6 +69,15 @@ const STATUS_CONFIG: Record<
     border: 'border-redx/30',
     glow: 'shadow-[0_0_28px_-6px_rgba(217,101,79,0.5)]',
     pulse: true,
+  },
+  blocked: {
+    label: 'Blocked',
+    dot: 'bg-redx',
+    text: 'text-redx',
+    bg: 'bg-redx/10',
+    border: 'border-redx/30',
+    glow: '',
+    pulse: false,
   },
 };
 

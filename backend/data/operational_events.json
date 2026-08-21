@@ -1,0 +1,55 @@
+[
+  {
+    "event_id": "EVT-INIT-001",
+    "event_type": "project_created",
+    "project_id": "PROJ-001",
+    "resource_id": null,
+    "vendor_id": null,
+    "agent_name": "Producer Agent",
+    "timestamp": "2026-08-20T10:00:00Z",
+    "severity": "INFO",
+    "payload": {
+      "title": "Rainforest Night Shoot",
+      "budget": 2500000.0,
+      "duration_days": 3,
+      "location": "Western Ghats (Agumbe)"
+    },
+    "trace_id": "trace-initialization-001",
+    "source": "cinexchange-ai"
+  },
+  {
+    "event_id": "EVT-SCOUT-001",
+    "event_type": "resource_search_completed",
+    "project_id": "PROJ-001",
+    "resource_id": "CAM-001",
+    "vendor_id": "V001",
+    "agent_name": "Marketplace Scout Agent",
+    "timestamp": "2026-08-20T10:05:00Z",
+    "severity": "INFO",
+    "payload": {
+      "total_candidates": 8,
+      "eligible_count": 5,
+      "top_candidate": "CAM-001"
+    },
+    "trace_id": "trace-scout-001",
+    "source": "cinexchange-ai"
+  },
+  {
+    "event_id": "EVT-INC-001",
+    "event_type": "resource_unavailable",
+    "project_id": "PROJ-001",
+    "resource_id": "CAM-001",
+    "vendor_id": "V001",
+    "agent_name": "Grafana Telemetry Monitor",
+    "timestamp": "2026-08-20T14:30:00Z",
+    "severity": "CRITICAL",
+    "payload": {
+      "message": "ARRI Alexa Mini LF sensor thermal shutdown detected in Agumbe rain sector",
+      "telemetry_source": "Grafana Cloud Synthetic Monitor",
+      "affected_resource": "CAM-001"
+    },
+    "trace_id": "trace-incident-001",
+    "source": "grafana-cloud-mcp",
+    "external_incident_id": "INC-GRAFANA-001"
+  }
+]

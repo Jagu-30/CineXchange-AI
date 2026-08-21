@@ -55,7 +55,7 @@ export function ActivityFeed({ events }: { events: ActivityEvent[] }) {
                   <span className="text-[12px] font-semibold text-ink-text-primary">
                     {ev.agentName}
                   </span>
-                  <span className="mono text-[10px] text-ink-text-tertiary">
+                  <span className="mono text-[10px] text-ink-text-tertiary" suppressHydrationWarning>
                     {formatTime(ev.timestamp)}
                   </span>
                 </div>

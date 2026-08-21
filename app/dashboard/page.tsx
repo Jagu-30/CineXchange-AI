@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { MissionProvider, useMission, formatINR, formatINRLakh } from '@/lib/mission-context';
+import { useMission, formatINR, formatINRLakh } from '@/lib/mission-context';
 import { AppShell } from '@/components/shared/app-shell';
 import { AgentStatusCard } from '@/components/shared/agent-status-card';
 import { ActivityFeed } from '@/components/shared/activity-feed';
@@ -30,17 +30,28 @@ function DashboardContent() {
   return (
     <div className="px-6 lg:px-10 py-8 max-w-[1500px] mx-auto">
       {/* Header */}
-      <header className="mb-8">
-        <div className="flex items-center gap-2 mb-2">
-          <Radio className="h-4 w-4 text-amberx animate-pulse-dot" />
-          <span className="mono text-[10px] uppercase tracking-[0.18em] text-amberx font-medium">
-            Live · Mission Control
-          </span>
+      <header className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <Radio className="h-4 w-4 text-amberx animate-pulse-dot" />
+            <span className="mono text-[10px] uppercase tracking-[0.18em] text-amberx font-medium">
+              Live · Mission Control
+            </span>
+          </div>
+          <h1 className="text-[26px] font-semibold tracking-tight text-ink-text-primary">
+            {scenario.title}
+          </h1>
+          <p className="mt-1.5 text-[13px] text-ink-text-secondary">{scenario.summary}</p>
         </div>
-        <h1 className="text-[26px] font-semibold tracking-tight text-ink-text-primary">
-          {scenario.title}
-        </h1>
-        <p className="mt-1.5 text-[13px] text-ink-text-secondary">{scenario.summary}</p>
+
+        <div className="flex items-center gap-3">
+          <a
+            href="/ai-planner"
+            className="flex items-center gap-2 rounded-xl bg-amberx px-5 py-2.5 text-[13px] font-semibold text-ink-bg hover:bg-amberx/90 shadow-lg shadow-amberx/20 transition-all"
+          >
+            Launch AI Production Planner →
+          </a>
+        </div>
       </header>
 
       {/* Stat cards */}
@@ -129,10 +140,8 @@ function SectionTitle({ icon: Icon, title, accent = 'default' }: {
 
 export default function DashboardPage() {
   return (
-    <MissionProvider>
-      <AppShell>
-        <DashboardContent />
-      </AppShell>
-    </MissionProvider>
+    <AppShell>
+      <DashboardContent />
+    </AppShell>
   );
 }

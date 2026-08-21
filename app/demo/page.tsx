@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { MissionProvider, useMission } from '@/lib/mission-context';
+import { useMission } from '@/lib/mission-context';
 import { AppShell } from '@/components/shared/app-shell';
 import { ActivityFeed } from '@/components/shared/activity-feed';
 import { ApprovalCard } from '@/components/shared/approval-card';
@@ -186,10 +186,8 @@ function DemoContent() {
 
 export default function DemoPage() {
   return (
-    <MissionProvider>
-      <AppShell>
-        <DemoContent />
-      </AppShell>
-    </MissionProvider>
+    <AppShell>
+      <DemoContent />
+    </AppShell>
   );
 }

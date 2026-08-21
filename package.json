@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backend": "python backend/run.py",
+    "test:backend": "python -m pytest backend/tests -v",
+    "test:all": "npm run typecheck && python -m pytest backend/tests -v",
+    "verify": "python run_integration_check.py"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

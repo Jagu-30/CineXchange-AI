@@ -1,24 +1,25 @@
 'use client';
 
-import { MissionProvider, useMission } from '@/lib/mission-context';
+import { useMission } from '@/lib/mission-context';
 import { AppShell } from '@/components/shared/app-shell';
 import { PROCUREMENT_STEPS } from '@/lib/mockData';
 import type { AgentId } from '@/lib/types';
 import {
-  Brain, Search, Handshake, ShieldCheck, Siren, Check, type LucideIcon,
+  Brain, Search, Handshake, ShieldCheck, Siren, Cpu, Check, type LucideIcon,
 } from 'lucide-react';
 
 const ICONS: Record<AgentId, LucideIcon> = {
-  producer: Brain, scout: Search, negotiation: Handshake, compliance: ShieldCheck, recovery: Siren,
+  producer: Brain, scout: Search, negotiation: Handshake, compliance: ShieldCheck, recovery: Siren, policy_engine: Cpu,
 };
 
 const AGENT_COLOR: Record<AgentId, string> = {
-  producer: 'text-amberx', scout: 'text-bluex', negotiation: 'text-amberx', compliance: 'text-greenx', recovery: 'text-redx',
+  producer: 'text-amberx', scout: 'text-bluex', negotiation: 'text-amberx', compliance: 'text-greenx', recovery: 'text-redx', policy_engine: 'text-purple-400',
 };
 
 const AGENT_BG: Record<AgentId, string> = {
-  producer: 'bg-amberx/10', scout: 'bg-bluex/10', negotiation: 'bg-amberx/10', compliance: 'bg-greenx/10', recovery: 'bg-redx/10',
+  producer: 'bg-amberx/10', scout: 'bg-bluex/10', negotiation: 'bg-amberx/10', compliance: 'bg-greenx/10', recovery: 'bg-redx/10', policy_engine: 'bg-purple-500/10',
 };
+
 
 function BookingContent() {
   const { scenario } = useMission();
@@ -112,10 +113,8 @@ function BookingContent() {
 
 export default function BookingPage() {
   return (
-    <MissionProvider>
-      <AppShell>
-        <BookingContent />
-      </AppShell>
-    </MissionProvider>
+    <AppShell>
+      <BookingContent />
+    </AppShell>
   );
 }

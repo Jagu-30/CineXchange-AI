@@ -1,0 +1,102 @@
+[
+  {
+    "document_id": "DOC-INS-001",
+    "document_type": "INSURANCE",
+    "vendor_id": "V003",
+    "vendor_name": "ForestFrame Rentals",
+    "title": "Comprehensive All-Risk Media Production Policy #POL-9921",
+    "valid_from": "2026-08-01",
+    "valid_until": "2026-09-30",
+    "coverage_amount": 5000000,
+    "status": "VALID",
+    "extraction_confidence": 0.98,
+    "extracted_fields": {
+      "insurer": "New India Assurance Film Unit",
+      "policy_holder": "ForestFrame Media Rigs Ltd",
+      "policy_type": "On-Location All Risk Equipment & Third-Party Liability",
+      "coverage_limit_inr": 5000000,
+      "deductible_inr": 15000,
+      "weather_delay_clause": true,
+      "special_locations": ["Western Ghats", "Agumbe Rainforest", "Eco Zones"]
+    },
+    "source_reference": "data/mock_docs/insurance_v003_valid.pdf"
+  },
+  {
+    "document_id": "DOC-PRM-001",
+    "document_type": "PERMIT",
+    "vendor_id": "V003",
+    "vendor_name": "Karnataka Forest Dept. / ForestFrame Liaison",
+    "title": "Government of Karnataka Forest Department Night Filming Approval #KFD-2026-778",
+    "valid_from": "2026-08-15",
+    "valid_until": "2026-08-30",
+    "coverage_amount": 0,
+    "status": "VALID",
+    "extraction_confidence": 0.99,
+    "extracted_fields": {
+      "issuing_authority": "Office of Deputy Conservator of Forests, Shivamogga",
+      "filming_range": "Agumbe & Someshwara Wildlife Sanctuary Buffer",
+      "authorized_hours": "18:00 to 06:00 (Night Shoot Authorized)",
+      "crew_limit": 25,
+      "generator_noise_limit_db": 60,
+      "ranger_escort_required": true
+    },
+    "source_reference": "data/mock_docs/kfd_night_permit.pdf"
+  },
+  {
+    "document_id": "DOC-LIC-001",
+    "document_type": "LICENSE",
+    "vendor_id": "V001",
+    "vendor_name": "Skyline Aerials / LightForge Rentals",
+    "title": "DGCA Remote Pilot License #DGCA-RP-88491-CAT1",
+    "valid_from": "2024-01-10",
+    "valid_until": "2029-01-09",
+    "coverage_amount": 1000000,
+    "status": "VALID",
+    "extraction_confidence": 0.97,
+    "extracted_fields": {
+      "pilot_name": "Rohan Deshmukh",
+      "license_category": "Small & Medium RPA (Night Flight Endorsement)",
+      "dgca_registration": "UIN-IND-2024-9912",
+      "medical_validity": "CURRENT"
+    },
+    "source_reference": "data/mock_docs/dgca_pilot_license.pdf"
+  },
+  {
+    "document_id": "DOC-CTR-001",
+    "document_type": "CONTRACT",
+    "vendor_id": "V003",
+    "vendor_name": "ForestFrame Rentals",
+    "title": "Master Equipment Rental Agreement & SLA Commitment",
+    "valid_from": "2026-08-01",
+    "valid_until": "2026-12-31",
+    "coverage_amount": 2500000,
+    "status": "VALID",
+    "extraction_confidence": 0.96,
+    "extracted_fields": {
+      "governing_law": "Courts of Bengaluru, Karnataka",
+      "replacement_sla_hours": 2,
+      "cancellation_terms": "Full refund if weather red alert",
+      "dispute_resolution": "Arbitration under ACA 1996"
+    },
+    "source_reference": "data/mock_docs/master_services_agreement.pdf"
+  },
+  {
+    "document_id": "DOC-INS-EXPIRED",
+    "document_type": "INSURANCE",
+    "vendor_id": "V005",
+    "vendor_name": "CheapGear QuickRent",
+    "title": "Expired Commercial Transit Policy #POL-OLD-441",
+    "valid_from": "2025-01-01",
+    "valid_until": "2025-12-31",
+    "coverage_amount": 500000,
+    "status": "EXPIRED",
+    "extraction_confidence": 0.95,
+    "extracted_fields": {
+      "insurer": "National General Insurance",
+      "expiry_flag": true,
+      "days_expired": 229,
+      "coverage_limit_inr": 500000
+    },
+    "source_reference": "data/mock_docs/expired_insurance_v005.pdf"
+  }
+]

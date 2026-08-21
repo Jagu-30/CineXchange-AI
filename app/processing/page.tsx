@@ -43,7 +43,7 @@ export default function ProcessingPage() {
       }, elapsed));
     });
 
-    timeouts.push(setTimeout(() => { if (!cancelled) router.push('/dashboard'); }, elapsed + 600));
+    timeouts.push(setTimeout(() => { if (!cancelled) router.push('/ai-planner/requirements'); }, elapsed + 600));
 
     return () => { cancelled = true; timeouts.forEach(clearTimeout); };
   }, [router]);

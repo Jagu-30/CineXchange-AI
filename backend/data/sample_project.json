@@ -1,0 +1,11 @@
+{
+  "project_id": "PROJ-001",
+  "title": "Rainforest Night Shoot",
+  "description": "Two low-light rainforest scenes over three days.",
+  "producer_request": "We need to shoot two low-light rainforest scenes over three days within ₹25 lakh.",
+  "budget": 2500000,
+  "currency": "INR",
+  "duration_days": 3,
+  "location": "Western Ghats rainforest",
+  "created_at": "2026-08-17T09:00:00Z"
+}

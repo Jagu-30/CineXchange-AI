@@ -283,7 +283,7 @@ export const PROCUREMENT_STEPS: ProcurementStep[] = [
 export const INITIAL_ACTIVITY: ActivityEvent[] = [
   {
     id: 'act-001',
-    timestamp: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
+    timestamp: '2026-08-21T10:18:00.000Z',
     agent: 'producer',
     agentName: 'Producer Agent',
     message: 'Shoot brief parsed into 8 requirement categories across 3 shoot days.',
@@ -291,7 +291,7 @@ export const INITIAL_ACTIVITY: ActivityEvent[] = [
   },
   {
     id: 'act-002',
-    timestamp: new Date(Date.now() - 1000 * 60 * 38).toISOString(),
+    timestamp: '2026-08-21T10:22:00.000Z',
     agent: 'scout',
     agentName: 'Marketplace Scout Agent',
     message: 'Found 23 vendors in range across 8 categories; shortlisted 11 for offers.',
@@ -299,7 +299,7 @@ export const INITIAL_ACTIVITY: ActivityEvent[] = [
   },
   {
     id: 'act-003',
-    timestamp: new Date(Date.now() - 1000 * 60 * 31).toISOString(),
+    timestamp: '2026-08-21T10:29:00.000Z',
     agent: 'scout',
     agentName: 'Marketplace Scout Agent',
     message: 'Offers received from 9 vendors. 2 categories need negotiation.',
@@ -307,7 +307,7 @@ export const INITIAL_ACTIVITY: ActivityEvent[] = [
   },
   {
     id: 'act-004',
-    timestamp: new Date(Date.now() - 1000 * 60 * 24).toISOString(),
+    timestamp: '2026-08-21T10:36:00.000Z',
     agent: 'negotiation',
     agentName: 'Negotiation Agent',
     message: 'Camera bundle negotiated: 14% off on 2-body package with LightForge.',
@@ -315,7 +315,7 @@ export const INITIAL_ACTIVITY: ActivityEvent[] = [
   },
   {
     id: 'act-005',
-    timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
+    timestamp: '2026-08-21T10:42:00.000Z',
     agent: 'negotiation',
     agentName: 'Negotiation Agent',
     message: 'Lighting + generator bundled across GlowLab and PowerHaul — saved ₹51,000.',
@@ -323,7 +323,7 @@ export const INITIAL_ACTIVITY: ActivityEvent[] = [
   },
   {
     id: 'act-006',
-    timestamp: new Date(Date.now() - 1000 * 60 * 11).toISOString(),
+    timestamp: '2026-08-21T10:49:00.000Z',
     agent: 'compliance',
     agentName: 'Compliance & Approval Agent',
     message: 'Forest permit confirmed for after-hours filming. Insurance pending producer decision.',
@@ -331,7 +331,7 @@ export const INITIAL_ACTIVITY: ActivityEvent[] = [
   },
   {
     id: 'act-007',
-    timestamp: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
+    timestamp: '2026-08-21T10:56:00.000Z',
     agent: 'compliance',
     agentName: 'Compliance & Approval Agent',
     message: 'Insurance vendor selection requires producer approval — 3 quotes ranked.',
