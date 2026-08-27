@@ -1176,7 +1176,8 @@ class VendorDecision:
 
 
 def derive_policy(vendor_id: uuid.UUID) -> VendorPolicy:
-    rng = random.Random(int(vendor_id.hex[:8], 16))
+    rng = random.Random(vendor_id.int)  # full UUID: hex[:8] is the HIGH bits, which
+                                       # collide across vendors in the same seeded category
     return VendorPolicy(
         floor_pct=rng.uniform(0.72, 0.88),
         concession_rate=rng.uniform(0.25, 0.55),
@@ -1197,7 +1198,10 @@ def _reservation(policy: VendorPolicy, base_price: Decimal, offer_terms: dict) -
     reservation = base_price * Decimal(str(policy.floor_pct))
     conceded = [t for t in CONCEDABLE_TERMS if offer_terms.get(t)]
     if conceded and policy.bundle_appetite > 0.5:
-        discount = min(MAX_BUNDLE_DISCOUNT, MAX_BUNDLE_DISCOUNT * Decimal(str(policy.bundle_appetite)))
+        # interpolate 0.5*MAX..MAX across appetite 0..1 so a barely-eligible vendor
+        # still clears a meaningful discount instead of shrinking toward zero
+        appetite = Decimal(str(policy.bundle_appetite))
+        discount = MAX_BUNDLE_DISCOUNT * (Decimal("0.5") + Decimal("0.5") * appetite)
         reservation *= Decimal("1") - discount
     return reservation
 

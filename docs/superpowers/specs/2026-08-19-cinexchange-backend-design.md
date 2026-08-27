@@ -305,7 +305,7 @@ Each vendor's policy is derived deterministically from its UUID and **never leav
 process**:
 
 ```python
-rng             = random.Random(int(vendor_id.hex[:8], 16))
+rng             = random.Random(vendor_id.int)   # full UUID - hex[:8] collides across a category
 floor_pct       = rng.uniform(0.72, 0.88)   # reservation = base_price * floor_pct
 concession_rate = rng.uniform(0.25, 0.55)   # fraction of remaining gap closed per round
 bundle_appetite = rng.uniform(0.0, 1.0)     # willingness to trade terms for price
@@ -319,7 +319,7 @@ Per-round decision, given the agent's offer and the vendor's current ask:
   the floor
 - otherwise → **counter** at `ask - concession_rate * (ask - max(reservation, offer))`
 - if the agent conceded a term (flexible dates, longer rental, bundled units) and
-  `bundle_appetite > 0.5`, the effective reservation drops by up to 5% for that round
+  `bundle_appetite > 0.5`, the effective reservation drops by 3.75-5% for that round
 
 Session state is held in-process, keyed by `session_id`, and survives across the rounds of one
 negotiation.
