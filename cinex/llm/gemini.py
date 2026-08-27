@@ -23,8 +23,40 @@ class LLMError(Exception):
 
 
 class GeminiClient:
-    def __init__(self, api_key: str, model: str, timeout_s: float) -> None:
-        self._client = genai.Client(api_key=api_key)
+    """Two construction paths, one call surface.
+
+    ``use_vertex=False`` (the default) is the Gemini Developer API and is
+    byte-for-byte what this class has always done: ``genai.Client(api_key=...)``.
+
+    ``use_vertex=True`` is the Vertex AI path used when this runs on Google
+    Cloud. The SDK then authenticates with Application Default Credentials -
+    the runtime service account attached to the Cloud Run / GKE workload - so
+    ``api_key`` is not passed at all and the deployment carries no leakable
+    secret. Everything below ``__init__`` is identical either way; only the
+    transport and the auth differ.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout_s: float,
+        *,
+        use_vertex: bool = False,
+        project: str | None = None,
+        location: str | None = None,
+    ) -> None:
+        if use_vertex:
+            if not project or not location:
+                raise LLMError(
+                    "gemini_use_vertex is set but gcp_project/gcp_location are empty; "
+                    "Vertex AI needs both."
+                )
+            # No api_key here, on purpose. Passing one alongside vertexai=True
+            # would put the secret back into the deployment for no benefit.
+            self._client = genai.Client(vertexai=True, project=project, location=location)
+        else:
+            self._client = genai.Client(api_key=api_key)
         self._model = model
         self._timeout_s = timeout_s
 
@@ -74,4 +106,7 @@ def get_llm() -> GeminiClient:
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
         timeout_s=settings.llm_timeout_s,
+        use_vertex=settings.gemini_use_vertex,
+        project=settings.gcp_project,
+        location=settings.gcp_location,
     )

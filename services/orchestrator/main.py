@@ -4,20 +4,25 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from cinex.audit import write_audit
 from cinex.auth import Producer, issue_demo_token, require_producer
 from cinex.clickhouse import init_clickhouse
 from cinex.config import get_settings
-from cinex.db.models import Approval, AuditLog, Booking, Production, RecoveryEvent
+from cinex.db.models import (
+    Approval, AuditLog, Booking, ComplianceCheck, Offer, Production, RecoveryEvent, Requirement,
+    Vendor,
+)
 from cinex.db.session import init_db, session_scope
 from cinex.logging import get_logger
 from cinex.mcp_client import get_agents
 from cinex.steps import read_steps
+from services.orchestrator.aggregate import ProductionRecords, build_detail, build_summary
 from services.orchestrator.pipeline import resume_after_approval, run_happy_path
 
 log = get_logger("orchestrator-api")
@@ -42,6 +47,31 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="CineXchange Orchestrator", lifespan=lifespan)
+
+# The browser app and this API are separate origins in every deployment we have
+# (Next.js on :3000, uvicorn on :8000), so without this the frontend cannot read
+# a single response. Origins come from FRONTEND_ORIGIN and are always explicit;
+# Settings.allowed_origins() documents why "*" is never an option here.
+#
+# allow_credentials=True is what makes the SSE stream at GET
+# /productions/{id}/events usable from `new EventSource(url, {withCredentials:
+# true})`. The CORS spec then requires a concrete origin in
+# Access-Control-Allow-Origin, which an explicit list satisfies and "*" would
+# not - the browser would reject every response.
+#
+# Authorization is listed explicitly because it is NOT a CORS-safelisted request
+# header: omit it and the preflight for every bearer-authed endpoint
+# (/productions, /productions/{id}, /status, /trace, /approvals/.../decide,
+# /recovery) fails before the real request is ever sent. Content-Type covers the
+# JSON POST bodies. OPTIONS is in allow_methods for the preflight itself.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=600,
+)
 
 
 class ProductionRequest(BaseModel):
@@ -99,6 +129,136 @@ async def create_production(
 
     background.add_task(run_happy_path, production_id)
     return {"production_id": str(production_id), "status": "draft"}
+
+
+@app.get("/productions")
+async def list_productions(
+    producer: Producer = Depends(require_producer),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict:
+    """Every production this producer has started, newest first.
+
+    Without this the frontend cannot find a run again after a page reload: the
+    production_id only ever existed in the 202 body of POST /productions.
+
+    Scoped to the authenticated producer - unlike the per-production endpoints,
+    this one enumerates, so it must not leak another producer's runs.
+    """
+    async with session_scope() as session:
+        rows = (await session.execute(
+            select(Production)
+            .where(Production.producer_id == producer.id)
+            # created_at is a server default, so two productions created inside one
+            # transaction share it; id breaks the tie deterministically rather than
+            # letting the page order wobble between requests.
+            .order_by(Production.created_at.desc(), Production.id.desc())
+            .limit(limit)
+        )).scalars().all()
+
+    return {"productions": [build_summary(p) for p in rows], "count": len(rows)}
+
+
+@app.get("/productions/{production_id}")
+async def production_detail(
+    production_id: uuid.UUID, _: Producer = Depends(require_producer)
+) -> dict:
+    """Everything the producer console needs about one run, in one round trip.
+
+    Assembled strictly from rows that exist and audit payloads that were actually
+    written. Anything the UI asked for that no agent ever recorded is named -
+    with the reason - under the `unavailable` key, never guessed at.
+
+    Ownership is deliberately not filtered here, matching the sibling /status and
+    /trace endpoints: a production_id is already an unguessable UUID, and the
+    seeded demo runs carry a different producer_id than the demo token's.
+    """
+    async with session_scope() as session:
+        production = (await session.execute(
+            select(Production).where(Production.id == production_id)
+        )).scalar_one_or_none()
+        if production is None:
+            raise HTTPException(status_code=404, detail="unknown production")
+
+        requirements = (await session.execute(
+            select(Requirement)
+            .where(Requirement.production_id == production_id)
+            .order_by(Requirement.priority, Requirement.created_at)
+        )).scalars().all()
+        requirement_ids = [r.id for r in requirements]
+
+        offers = (await session.execute(
+            select(Offer)
+            .where(Offer.requirement_id.in_(requirement_ids))
+            .order_by(Offer.created_at)
+        )).scalars().all()
+
+        vendor_ids = {o.vendor_id for o in offers}
+        vendors = {
+            v.id: v
+            for v in (await session.execute(
+                select(Vendor).where(Vendor.id.in_(vendor_ids))
+            )).scalars().all()
+        }
+
+        bookings = (await session.execute(
+            select(Booking)
+            .where(Booking.production_id == production_id)
+            .order_by(Booking.created_at)
+        )).scalars().all()
+
+        checks = (await session.execute(
+            select(ComplianceCheck)
+            .where(ComplianceCheck.production_id == production_id)
+            .order_by(ComplianceCheck.created_at)
+        )).scalars().all()
+
+        approvals = (await session.execute(
+            select(Approval)
+            .where(Approval.production_id == production_id)
+            .order_by(Approval.created_at)
+        )).scalars().all()
+
+        recovery_events = (await session.execute(
+            select(RecoveryEvent)
+            .where(RecoveryEvent.production_id == production_id)
+            .order_by(RecoveryEvent.created_at)
+        )).scalars().all()
+
+        steps = await read_steps(session, production_id)
+
+        # One pass over the audit log covering every entity this production owns.
+        # The round-by-round negotiation history, scout's rank/availability and an
+        # approval's delta_pct exist ONLY in these payloads - there is no column
+        # for any of them - so the aggregate is not assemblable without this read.
+        audit = (await session.execute(
+            select(AuditLog)
+            .where(or_(
+                and_(AuditLog.entity_type == "production",
+                     AuditLog.entity_id == production_id),
+                and_(AuditLog.entity_type == "requirement",
+                     AuditLog.entity_id.in_(requirement_ids)),
+                and_(AuditLog.entity_type == "offer",
+                     AuditLog.entity_id.in_([o.id for o in offers])),
+                and_(AuditLog.entity_type == "approval",
+                     AuditLog.entity_id.in_([a.id for a in approvals])),
+                and_(AuditLog.entity_type == "recovery_event",
+                     AuditLog.entity_id.in_([e.id for e in recovery_events])),
+            ))
+            .order_by(AuditLog.seq)
+        )).scalars().all()
+
+    return build_detail(ProductionRecords(
+        production=production,
+        requirements=list(requirements),
+        offers=list(offers),
+        vendors=vendors,
+        bookings=list(bookings),
+        checks=list(checks),
+        approvals=list(approvals),
+        recovery_events=list(recovery_events),
+        steps=steps,
+        audit=list(audit),
+    ))
 
 
 @app.get("/productions/{production_id}/status")

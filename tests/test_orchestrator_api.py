@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -7,7 +8,8 @@ import pytest
 from sqlalchemy import select
 
 from cinex.auth import issue_demo_token
-from cinex.db.models import Approval, Production
+from cinex.config import get_settings
+from cinex.db.models import Approval, Booking, Offer, Production, Requirement, Vendor
 
 pytestmark = pytest.mark.integration
 
@@ -115,3 +117,138 @@ async def test_deciding_twice_is_rejected(client, auth, session, production):
     r = await client.post(f"/approvals/{approval.id}/decide", headers=auth,
                           json={"decision": "rejected"})
     assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# The aggregate read model. The response *shape* is asserted without a database
+# in tests/test_orchestrator_read_model.py; what needs Postgres - and only
+# Postgres - is the SQL underneath: the producer filter, the newest-first order,
+# and the multi-entity audit_log fan-in that stitches offers, requirements,
+# approvals and recovery events back together.
+# ---------------------------------------------------------------------------
+
+async def _demo_production(session, brief: str, budget: Decimal) -> Production:
+    """A production owned by the demo token's producer, so GET /productions sees it."""
+    row = Production(
+        producer_id=uuid.UUID(get_settings().demo_producer_id),
+        brief_text=brief, budget_cap=budget, location="Lisbon",
+        start_date=date(2026, 9, 1), end_date=date(2026, 9, 3), status="draft",
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def test_list_productions_is_scoped_to_the_authenticated_producer(client, auth, session,
+                                                                        production):
+    """`production` (the shared fixture) belongs to a random producer_id and must
+    not appear in the demo producer's list."""
+    mine = await _demo_production(session, "Demo producer run", Decimal("50000.00"))
+
+    body = (await client.get("/productions", headers=auth)).json()
+
+    ids = [p["production_id"] for p in body["productions"]]
+    assert str(mine.id) in ids
+    assert str(production.id) not in ids, "another producer's run must not leak"
+    assert body["count"] == len(body["productions"])
+
+
+async def test_list_productions_is_newest_first_and_truncates_the_brief(client, auth, session):
+    await _demo_production(session, "older run", Decimal("10000.00"))
+    newer = await _demo_production(session, "x" * 500, Decimal("20000.00"))
+
+    body = (await client.get("/productions", headers=auth)).json()
+
+    assert body["productions"][0]["production_id"] == str(newer.id)
+    assert body["productions"][0]["brief_truncated"] is True
+    assert body["productions"][0]["brief_text"].endswith("...")
+    assert body["productions"][0]["budget_cap"] == "20000.00"
+
+
+async def test_list_productions_requires_auth(client):
+    assert (await client.get("/productions")).status_code == 403
+
+
+async def test_production_detail_404s_for_an_unknown_id(client, auth):
+    r = await client.get(f"/productions/{uuid.uuid4()}", headers=auth)
+    assert r.status_code == 404
+
+
+async def test_production_detail_stitches_rows_and_audit_payloads_together(client, auth,
+                                                                          session, production):
+    """The whole point of the endpoint: rank lives only in scout's audit payload,
+    the negotiation rounds only in the negotiation agent's, and both have to come
+    back attached to the right requirement and offer."""
+    from cinex.audit import write_audit
+
+    requirement = Requirement(production_id=production.id, category="camera",
+                              spec={"role": "drone operator"}, quantity=1, priority=1)
+    session.add(requirement)
+    await session.flush()
+
+    vendor = Vendor(name="Atlantic Aerials", category="camera", rating=Decimal("4.70"),
+                    base_price=Decimal("45000.00"), availability_calendar={"blocked": []},
+                    contact_meta={"endpoint": "http://vendor-mock-1:9001"})
+    session.add(vendor)
+    await session.flush()
+
+    offer = Offer(requirement_id=requirement.id, vendor_id=vendor.id,
+                  price=Decimal("41000.00"), terms={}, status="accepted",
+                  round=2, is_winner=True)
+    session.add(offer)
+    await session.flush()
+
+    booking = Booking(production_id=production.id, offer_id=offer.id,
+                      final_price=Decimal("41000.00"), status="confirmed")
+    session.add(booking)
+
+    await write_audit(session, actor="scout-agent", action="find_vendors",
+                      entity_type="requirement", entity_id=requirement.id,
+                      payload={"category": "camera", "considered": 1, "excluded": [],
+                               "offers": [{"offer_id": str(offer.id),
+                                           "vendor_id": str(vendor.id),
+                                           "vendor_name": "Atlantic Aerials",
+                                           "price": "45000.00", "terms": {},
+                                           "rank": 1, "available": True}]})
+    await write_audit(session, actor="negotiation-agent", action="negotiation_round",
+                      entity_type="offer", entity_id=offer.id,
+                      payload={"round": 1, "vendor_id": str(vendor.id),
+                               "vendor_name": "Atlantic Aerials", "offered": "41000.00",
+                               "conceded_terms": [], "rationale": "close the gap",
+                               "decision": "accept", "vendor_price": "41000.00",
+                               "vendor_message": "done"})
+    await session.commit()
+
+    body = (await client.get(f"/productions/{production.id}", headers=auth)).json()
+
+    assert body["production"]["production_id"] == str(production.id)
+    assert body["production"]["budget_cap"] == "120000.00"
+
+    [req] = body["requirements"]
+    assert req["requirement_id"] == str(requirement.id)
+    assert req["category"] == "camera"
+
+    [off] = req["offers"]
+    assert off["rank"] == 1, "from scout's audit payload - there is no rank column"
+    assert off["available"] is True
+    assert off["quoted_price"] == "45000.00"
+    assert off["price"] == "41000.00", "the negotiated price, from the offers row"
+    assert off["vendor_name"] == "Atlantic Aerials"
+    assert off["score_breakdown"] is None
+
+    rounds = req["negotiation"]["rounds"]
+    assert [r["round"] for r in rounds] == [1]
+    assert rounds[0]["decision"] == "accept"
+    assert rounds[0]["offer_id"] == str(offer.id), "regrouped from offer onto requirement"
+
+    [bkg] = body["bookings"]
+    assert bkg["final_price"] == "41000.00"
+    assert bkg["vendor_name"] == "Atlantic Aerials"
+    assert bkg["requirement_id"] == str(requirement.id)
+
+    assert "risk_assessment" in body["unavailable"]
+
+
+async def test_production_detail_requires_auth(client, production):
+    assert (await client.get(f"/productions/{production.id}")).status_code == 403
