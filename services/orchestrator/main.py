@@ -12,7 +12,7 @@ from sqlalchemy import select
 from cinex.audit import write_audit
 from cinex.auth import Producer, issue_demo_token, require_producer
 from cinex.config import get_settings
-from cinex.db.models import Approval, AuditLog, Production
+from cinex.db.models import Approval, AuditLog, Booking, Production, RecoveryEvent
 from cinex.db.session import init_db, session_scope
 from cinex.logging import get_logger
 from cinex.mcp_client import get_agents
@@ -46,6 +46,11 @@ class ProductionRequest(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     decision: str = Field(pattern="^(approved|rejected)$")
+
+
+class RecoveryRequest(BaseModel):
+    booking_id: uuid.UUID | None = None
+    trigger: str = "vendor_unavailable"
 
 
 @app.get("/healthz")
@@ -202,3 +207,45 @@ async def decide(
 
     return {"approval_id": str(approval_id), "decision": body.decision,
             "production_id": str(production_id)}
+
+
+@app.post("/productions/{production_id}/recovery")
+async def recovery(
+    production_id: uuid.UUID,
+    body: RecoveryRequest,
+    _: Producer = Depends(require_producer),
+) -> dict:
+    """Trigger the 7-step recovery. booking_id is optional - omitted, we take the
+    most expensive confirmed booking, so the live demo needs one less UUID."""
+    async with session_scope() as session:
+        active = (await session.execute(
+            select(RecoveryEvent).where(
+                RecoveryEvent.production_id == production_id,
+                RecoveryEvent.status.in_(("pending", "in_progress", "awaiting_approval")),
+            )
+        )).scalars().first()
+        if active is not None:
+            return {"recovery_event_id": str(active.id), "timeline": active.timeline,
+                    "outcome": "already_in_progress"}
+
+        booking_id = body.booking_id
+        if booking_id is None:
+            booking = (await session.execute(
+                select(Booking)
+                .where(Booking.production_id == production_id, Booking.status == "confirmed")
+                .order_by(Booking.final_price.desc())
+            )).scalars().first()
+            if booking is None:
+                raise HTTPException(status_code=409,
+                                    detail="no confirmed booking to recover")
+            booking_id = booking.id
+
+        await write_audit(session, actor="producer", action="trigger_recovery",
+                          entity_type="production", entity_id=production_id,
+                          payload={"booking_id": str(booking_id), "trigger": body.trigger})
+
+    return await get_agents().call("recovery", "recover", {
+        "production_id": str(production_id),
+        "booking_id": str(booking_id),
+        "trigger": body.trigger,
+    })
