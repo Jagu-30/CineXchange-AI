@@ -84,17 +84,12 @@ services:
       SERVICE: compliance-agent
     ports: ["8004:8004"]
 
-  # TODO(Task 19): uncomment once services/recovery_agent exists.
-  # Until then this module import fails at container start and the service
-  # restart-loops forever, which just adds noise to `docker compose ps` -
-  # commented out so the rest of the stack comes up clean. /healthz correctly
-  # reports "recovery" as unreachable while this stays commented.
-  # recovery-agent:
-  #   <<: *app
-  #   environment:
-  #     <<: *db-env
-  #     SERVICE: recovery-agent
-  #   ports: ["8005:8005"]
+  recovery-agent:
+    <<: *app
+    environment:
+      <<: *db-env
+      SERVICE: recovery-agent
+    ports: ["8005:8005"]
 
   vendor-mock-1:
     <<: *app
