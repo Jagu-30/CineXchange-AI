@@ -140,7 +140,7 @@ All tables have `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`, `created_at`, `
 | `compliance_checks` | production_id FK NULL, booking_id FK NULL, check_type, status, evidence JSONB |
 | `approvals` | production_id FK, requested_by_agent, reason, threshold_breached BOOL, delta_amount NUMERIC, producer_decision, decided_at |
 | `recovery_events` | production_id FK, trigger, affected_booking_id FK, resolution_booking_id FK NULL, status, timeline JSONB |
-| `audit_log` | actor, action, entity_type, entity_id, payload JSONB, timestamp |
+| `audit_log` | seq BIGINT IDENTITY (ordering key), actor, action, entity_type, entity_id, payload JSONB |
 
 ### Status enums
 
@@ -156,7 +156,9 @@ All tables have `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`, `created_at`, `
 ### Indexes
 
 - `offers (requirement_id, status)`
-- `audit_log (entity_type, entity_id, timestamp)` and `audit_log (timestamp)`
+- `audit_log (entity_type, entity_id, seq)` and `audit_log (seq)`
+  — ordering uses the monotonic `seq`, never `created_at`: Postgres `now()` is transaction-start
+  time, so rows written in one transaction share it, and the tiebreak would be a random UUID.
 - `bookings (production_id, status)`
 - Partial unique on `recovery_events (production_id)` where status is one of
   `pending`, `in_progress`, `awaiting_approval` — this is the idempotency guarantee for a fumbled
