@@ -459,7 +459,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, text,
+    BigInteger, Boolean, Date, DateTime, ForeignKey, Identity, Index, Integer, Numeric,
+    String, Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -577,14 +578,18 @@ class RecoveryEvent(TimestampedUUID, Base):
 
 class AuditLog(TimestampedUUID, Base):
     __tablename__ = "audit_log"
+    # Timestamps cannot order an append-only log: server_default=func.now() is
+    # transaction-start time in Postgres, and wall-clock ties on Windows. Postgres
+    # assigns seq in true insertion order, so it is the ordering key and the SSE cursor.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     __table_args__ = (
-        Index("ix_audit_entity", "entity_type", "entity_id", "created_at"),
-        Index("ix_audit_created", "created_at"),
+        Index("ix_audit_entity", "entity_type", "entity_id", "seq"),
+        Index("ix_audit_seq", "seq"),
     )
 ```
 
@@ -839,6 +844,7 @@ ORCHESTRATOR = "orchestrator"
 @dataclass(frozen=True)
 class StepEvent:
     production_id: uuid.UUID
+    seq: int
     step: int
     name: str
     status: str          # in_progress | done | failed
@@ -853,6 +859,7 @@ class StepEvent:
             "name": self.name,
             "status": self.status,
             "detail": self.detail,
+            "seq": self.seq,
             "ts": self.ts.isoformat(),
         }
         return f"event: step\ndata: {json.dumps(body)}\n\n"
@@ -877,7 +884,7 @@ async def emit_step(
 
 
 async def read_steps(
-    session: AsyncSession, production_id: uuid.UUID, after: datetime | None = None
+    session: AsyncSession, production_id: uuid.UUID, after_seq: int | None = None
 ) -> list[StepEvent]:
     stmt = (
         select(AuditLog)
@@ -886,14 +893,15 @@ async def read_steps(
             AuditLog.entity_id == production_id,
             AuditLog.action.startswith(STEP_ACTION_PREFIX),
         )
-        .order_by(AuditLog.created_at, AuditLog.id)
+        .order_by(AuditLog.seq)
     )
-    if after is not None:
-        stmt = stmt.where(AuditLog.created_at > after)
+    if after_seq is not None:
+        stmt = stmt.where(AuditLog.seq > after_seq)
     rows = (await session.execute(stmt)).scalars().all()
     return [
         StepEvent(
             production_id=production_id,
+            seq=r.seq,
             step=r.payload["step"],
             name=r.payload["name"],
             status=r.payload["status"],
@@ -4303,16 +4311,16 @@ async def status(production_id: uuid.UUID, _: Producer = Depends(require_produce
 async def events(production_id: uuid.UUID) -> StreamingResponse:
     """SSE over the same DB projection /status reads, so the two cannot disagree."""
     async def stream():
-        cursor: datetime | None = None
+        cursor: int | None = None
         waited = 0.0
         while waited < SSE_MAX_SECONDS:
             async with session_scope() as session:
-                fresh = await read_steps(session, production_id, after=cursor)
+                fresh = await read_steps(session, production_id, after_seq=cursor)
                 production = (await session.execute(
                     select(Production.status).where(Production.id == production_id)
                 )).scalar_one_or_none()
             for event in fresh:
-                cursor = event.ts
+                cursor = event.seq
                 yield event.sse()
             if production in TERMINAL:
                 yield f"event: end\ndata: {{\"status\": \"{production}\"}}\n\n"
@@ -4333,7 +4341,7 @@ async def trace(production_id: uuid.UUID, _: Producer = Depends(require_producer
             select(AuditLog).where(
                 (AuditLog.entity_id == production_id)
                 | (AuditLog.payload["production_id"].astext == str(production_id))
-            ).order_by(AuditLog.created_at, AuditLog.id)
+            ).order_by(AuditLog.seq)
         )).scalars().all()
 
     return {

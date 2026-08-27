@@ -3,7 +3,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, text,
+    BigInteger, Boolean, Date, DateTime, ForeignKey, Identity, Index, Integer, Numeric, String,
+    Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -121,12 +122,13 @@ class RecoveryEvent(TimestampedUUID, Base):
 
 class AuditLog(TimestampedUUID, Base):
     __tablename__ = "audit_log"
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     __table_args__ = (
-        Index("ix_audit_entity", "entity_type", "entity_id", "created_at"),
-        Index("ix_audit_created", "created_at"),
+        Index("ix_audit_entity", "entity_type", "entity_id", "seq"),
+        Index("ix_audit_seq", "seq"),
     )

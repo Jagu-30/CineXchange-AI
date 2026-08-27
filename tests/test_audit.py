@@ -38,5 +38,17 @@ async def test_read_steps_after_cursor_returns_only_newer(session, production):
     await emit_step(session, production.id, 2, "decompose", "done")
     await session.commit()
 
-    later = await read_steps(session, production.id, after=first.ts)
+    later = await read_steps(session, production.id, after_seq=first.seq)
     assert [s.step for s in later] == [2]
+
+
+async def test_step_order_is_stable_within_a_single_transaction(session, production):
+    """created_at cannot order an append-only log: Postgres func.now() is
+    transaction-start time, and wall-clock ties on Windows. seq is monotonic."""
+    for i in range(20):
+        await emit_step(session, production.id, i, f"s{i}", "done")
+    await session.commit()
+
+    steps = await read_steps(session, production.id)
+    assert [s.step for s in steps] == list(range(20))
+    assert [s.seq for s in steps] == sorted(s.seq for s in steps)

@@ -20,6 +20,7 @@ class StepEvent:
     status: str          # in_progress | done | failed
     detail: dict
     ts: datetime
+    seq: int
 
     def sse(self) -> str:
         import json
@@ -30,6 +31,7 @@ class StepEvent:
             "status": self.status,
             "detail": self.detail,
             "ts": self.ts.isoformat(),
+            "seq": self.seq,
         }
         return f"event: step\ndata: {json.dumps(body)}\n\n"
 
@@ -53,7 +55,7 @@ async def emit_step(
 
 
 async def read_steps(
-    session: AsyncSession, production_id: uuid.UUID, after: datetime | None = None
+    session: AsyncSession, production_id: uuid.UUID, after_seq: int | None = None
 ) -> list[StepEvent]:
     stmt = (
         select(AuditLog)
@@ -62,10 +64,10 @@ async def read_steps(
             AuditLog.entity_id == production_id,
             AuditLog.action.startswith(STEP_ACTION_PREFIX),
         )
-        .order_by(AuditLog.created_at, AuditLog.id)
+        .order_by(AuditLog.seq)
     )
-    if after is not None:
-        stmt = stmt.where(AuditLog.created_at > after)
+    if after_seq is not None:
+        stmt = stmt.where(AuditLog.seq > after_seq)
     rows = (await session.execute(stmt)).scalars().all()
     return [
         StepEvent(
@@ -75,6 +77,7 @@ async def read_steps(
             status=r.payload["status"],
             detail=r.payload.get("detail", {}),
             ts=r.created_at,
+            seq=r.seq,
         )
         for r in rows
     ]
