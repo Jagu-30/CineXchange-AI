@@ -14,7 +14,7 @@ log = get_logger("cinex.clickhouse")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS offer_events (
-    ts            DateTime DEFAULT now(),
+    ts            DateTime64(6) DEFAULT now64(6),
     category      String,
     vendor_id     String,
     production_id String,
@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS offer_events (
 ) ENGINE = MergeTree()
 ORDER BY (category, ts)
 """
+# ts is microsecond-precision (DateTime64(6)/now64(6)), not the plain
+# second-precision DateTime this started as: two offer_events for the same
+# production_id (e.g. a "booking" then a "recovery_booking") written by
+# sequential, sub-second calls used to round to the same one-second bucket,
+# leaving cost_delta_history's "ORDER BY ts" order non-deterministic between
+# ties - exactly the ordering the recovery diff at spec step 6 depends on.
 
 
 @lru_cache
