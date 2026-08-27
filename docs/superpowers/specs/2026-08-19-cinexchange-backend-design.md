@@ -359,8 +359,10 @@ data: {"production_id": "...", "step": 6, "name": "negotiate",
        "status": "in_progress", "detail": {}, "ts": "2026-08-19T12:00:00Z"}
 ```
 
-`status` is one of `in_progress`, `done`, `failed`. Terminal events use a `name` of `booked`,
-`awaiting_approval`, or `failed`.
+`status` is one of `in_progress`, `done`, `failed`, `terminal`. The `terminal` row is the one the
+SSE consumer closes on; it carries the outcome (`booked`, `awaiting_approval`, or `failed`) in
+`detail`. It is a separate status rather than a second `done` so the step sequence stays exactly
+one `done` per step.
 
 ---
 

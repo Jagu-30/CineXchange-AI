@@ -4045,7 +4045,9 @@ async def _book(production_id: uuid.UUID) -> None:
                           entity_type="production", entity_id=production_id,
                           payload={"bookings": [str(b.id) for b in made], "total_cost": total})
     await _step(production_id, 10, "done", {"bookings": len(made), "total_cost": str(total)})
-    await _step(production_id, 10, "done", {"terminal": "booked"})
+    # Separate status, not a second "done": the SSE consumer closes on this row, and
+    # a second "done" would break the exact-match step-order assertion.
+    await _step(production_id, 10, "terminal", {"terminal": "booked"})
 
 
 async def _fail(production_id: uuid.UUID, step: int, reason: str) -> None:
@@ -4063,8 +4065,9 @@ async def resume_after_approval(production_id: uuid.UUID) -> None:
     await _book(production_id)
 ```
 
-Note the double `done` emit at step 10: the first carries the counts, the second carries the
-terminal marker the SSE consumer closes on. Both are real rows; neither is cosmetic.
+Note the two emits at step 10: the first carries the counts with `status="done"`, the second is a
+distinct `status="terminal"` row the SSE consumer closes on. Both are real rows; neither is
+cosmetic. They must not share a status, or the exact-match step-order assertion cannot hold.
 
 - [ ] **Step 4: Run the tests**
 
