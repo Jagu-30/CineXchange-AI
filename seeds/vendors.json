@@ -1,0 +1,137 @@
+[
+  {
+    "id": "a0000001-0000-4000-8000-000000000001",
+    "name": "Tejo Camera Rentals",
+    "category": "camera",
+    "rating": 4.7,
+    "base_price": "2400.00",
+    "availability_calendar": {"blocked": ["2026-09-05", "2026-09-06"]},
+    "contact_meta": {"endpoint": "http://vendor-mock-1:9001", "tier": "premium"}
+  },
+  {
+    "id": "a0000001-0000-4000-8000-000000000002",
+    "name": "Baixa Broadcast Supply",
+    "category": "camera",
+    "rating": 4.2,
+    "base_price": "2100.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-2:9002", "tier": "standard"}
+  },
+  {
+    "id": "a0000001-0000-4000-8000-000000000003",
+    "name": "Alfama Optics",
+    "category": "camera",
+    "rating": 3.9,
+    "base_price": "1850.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-3:9003", "tier": "budget"}
+  },
+  {
+    "id": "a0000002-0000-4000-8000-000000000001",
+    "name": "Sintra Aerial Unit (drone)",
+    "category": "crew",
+    "rating": 4.8,
+    "base_price": "1600.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-2:9002", "tier": "premium"}
+  },
+  {
+    "id": "a0000002-0000-4000-8000-000000000002",
+    "name": "Lapa Grip & Electric",
+    "category": "crew",
+    "rating": 4.3,
+    "base_price": "1200.00",
+    "availability_calendar": {"blocked": ["2026-09-01"]},
+    "contact_meta": {"endpoint": "http://vendor-mock-3:9003", "tier": "standard"}
+  },
+  {
+    "id": "a0000002-0000-4000-8000-000000000003",
+    "name": "Marvila Production Crew",
+    "category": "crew",
+    "rating": 3.6,
+    "base_price": "950.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-1:9001", "tier": "budget"}
+  },
+  {
+    "id": "a0000003-0000-4000-8000-000000000001",
+    "name": "Belem Riverside Studios",
+    "category": "location",
+    "rating": 4.9,
+    "base_price": "5200.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-1:9001", "tier": "premium"}
+  },
+  {
+    "id": "a0000003-0000-4000-8000-000000000002",
+    "name": "Cascais Villa Locations",
+    "category": "location",
+    "rating": 4.1,
+    "base_price": "3800.00",
+    "availability_calendar": {"blocked": ["2026-09-03"]},
+    "contact_meta": {"endpoint": "http://vendor-mock-2:9002", "tier": "standard"}
+  },
+  {
+    "id": "a0000003-0000-4000-8000-000000000003",
+    "name": "Almada Warehouse Set",
+    "category": "location",
+    "rating": 3.7,
+    "base_price": "2600.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-3:9003", "tier": "budget"}
+  },
+  {
+    "id": "a0000004-0000-4000-8000-000000000001",
+    "name": "Oeiras Grip Trucks",
+    "category": "transport",
+    "rating": 4.4,
+    "base_price": "1400.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-3:9003", "tier": "standard"}
+  },
+  {
+    "id": "a0000004-0000-4000-8000-000000000002",
+    "name": "Setubal Fleet Transport",
+    "category": "transport",
+    "rating": 3.8,
+    "base_price": "980.00",
+    "availability_calendar": {"blocked": ["2026-09-10"]},
+    "contact_meta": {"endpoint": "http://vendor-mock-1:9001", "tier": "budget"}
+  },
+  {
+    "id": "a0000005-0000-4000-8000-000000000001",
+    "name": "Estrela Production Insurance",
+    "category": "insurance",
+    "rating": 4.6,
+    "base_price": "3200.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-2:9002", "tier": "premium"}
+  },
+  {
+    "id": "a0000005-0000-4000-8000-000000000002",
+    "name": "Chiado Risk Partners",
+    "category": "insurance",
+    "rating": 3.9,
+    "base_price": "2450.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-1:9001", "tier": "standard"}
+  },
+  {
+    "id": "a0000006-0000-4000-8000-000000000001",
+    "name": "Lisboa Camara Permits Office",
+    "category": "permit",
+    "rating": 4.5,
+    "base_price": "850.00",
+    "availability_calendar": {"blocked": []},
+    "contact_meta": {"endpoint": "http://vendor-mock-3:9003", "tier": "standard"}
+  },
+  {
+    "id": "a0000006-0000-4000-8000-000000000002",
+    "name": "Porto District Filming Permits",
+    "category": "permit",
+    "rating": 4.0,
+    "base_price": "650.00",
+    "availability_calendar": {"blocked": ["2026-09-02"]},
+    "contact_meta": {"endpoint": "http://vendor-mock-2:9002", "tier": "budget"}
+  }
+]
