@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from cinex.db.models import Base, Production
@@ -28,6 +29,19 @@ async def session():
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with maker() as s:
+        # Agents under test open their own session against a *different* engine
+        # (cinex.db.session.session_scope) and commit independently. With
+        # expire_on_commit=False (required for async - accessing an expired
+        # attribute after commit would need a synchronous lazy-load), a plain
+        # select() here would otherwise return this session's stale, already
+        # cached-by-identity-map objects instead of what the agent just wrote.
+        # Force every SELECT issued through this test session to re-populate
+        # from the row actually on disk, so assertions see reality.
+        @event.listens_for(s.sync_session, "do_orm_execute")
+        def _populate_existing(execute_state):
+            if execute_state.is_select:
+                execute_state.update_execution_options(populate_existing=True)
+
         yield s
     await engine.dispose()
 
