@@ -7,12 +7,21 @@ agent runs in a different container and provably cannot read it.
 import random
 import uuid
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
-LIST_MULTIPLIER = Decimal("1.15")
+from cinex.pricing import CENTS, LIST_MULTIPLIER, list_price, money as _money, opening_ask
+
 MAX_BUNDLE_DISCOUNT = Decimal("0.05")
 CONCEDABLE_TERMS = frozenset({"flexible_dates", "extended_rental_days", "bundled_units"})
-CENTS = Decimal("0.01")
+
+# LIST_MULTIPLIER, CENTS, _money and opening_ask moved to cinex.pricing so the
+# vendor's list price and scout-agent's unavailable-vendor fallback derive from
+# one rule instead of two copies of a magic 1.15. Re-exported here because this
+# module is the vendor's public policy surface.
+__all__ = [
+    "CENTS", "CONCEDABLE_TERMS", "LIST_MULTIPLIER", "MAX_BUNDLE_DISCOUNT",
+    "VendorDecision", "VendorPolicy", "derive_policy", "list_price", "opening_ask", "respond",
+]
 
 
 @dataclass(frozen=True)
@@ -39,14 +48,6 @@ def derive_policy(vendor_id: uuid.UUID) -> VendorPolicy:
         bundle_appetite=rng.uniform(0.0, 1.0),
         patience=rng.randint(2, 4),
     )
-
-
-def opening_ask(base_price: Decimal) -> Decimal:
-    return _money(base_price * LIST_MULTIPLIER)
-
-
-def _money(value: Decimal) -> Decimal:
-    return value.quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
 def _reservation(policy: VendorPolicy, base_price: Decimal, offer_terms: dict) -> Decimal:

@@ -10,12 +10,16 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from cinex.logging import get_logger
+from cinex.pricing import list_price, shoot_days
 from services.vendor_mock.policy import derive_policy, opening_ask, respond
 
 log = get_logger("vendor-mock")
 app = FastAPI(title="CineXchange Vendor Mock")
 
 # session_id -> {"ask": Decimal, "rounds": int}
+# Process-local and unbounded: a mock counterparty deliberately keeps no
+# database, so a container restart loses every mid-flight negotiation ladder.
+# Acceptable for a demo mock; it is the reason the ladder is not authoritative.
 _sessions: dict[str, dict] = {}
 _disabled: set[str] = set()
 
@@ -50,10 +54,13 @@ async def quote(
 ) -> dict:
     if str(vendor_id) in _disabled:
         raise HTTPException(status_code=503, detail="vendor unavailable")
-    days = max((end - start).days, 1)
-    ask = opening_ask(base_price) * quantity * days
+    # Inclusive of both ends, matching availability (below) and the scheduler.
+    # This used to be an exclusive (end - start).days, which billed a three-day
+    # shoot as two and handed the budget-cap gate a number a third too low.
+    days = shoot_days(start, end)
+    ask = list_price(base_price, quantity, start, end)
     return {
-        "price": str(ask.quantize(Decimal("0.01"))),
+        "price": str(ask),
         "terms": {
             "category": category,
             "quantity": quantity,

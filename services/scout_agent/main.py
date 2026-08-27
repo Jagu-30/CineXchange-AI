@@ -12,6 +12,7 @@ from cinex.db.models import Offer, Production, Requirement, Vendor
 from cinex.db.session import session_scope
 from cinex.http import VendorUnavailable, request_with_retry
 from cinex.logging import get_logger
+from cinex.pricing import list_price
 from services.scout_agent.ranking import score
 
 log = get_logger("scout-agent")
@@ -34,7 +35,18 @@ async def _quote(vendor: Vendor, requirement: Requirement, start, end) -> tuple[
         return Decimal(body["price"]), body.get("terms", {}), bool(body.get("available", True))
     except VendorUnavailable as exc:
         log.warning("quote_fallback", extra={"vendor_id": str(vendor.id), "error": str(exc)})
-        return vendor.base_price, {"fallback": True, "reason": str(exc)}, True
+        # Price the fallback on exactly the same basis a live quote uses
+        # (list multiplier x quantity x days, from cinex.pricing) and report it
+        # as unavailable. A bare base_price marked available=True was always
+        # strictly cheaper than any real quote, so score() ranked the dead
+        # vendor first and it got booked - graceful degradation that actively
+        # preferred vendors that were down. available=False now routes it
+        # through score()'s UNAVAILABLE_PENALTY, below every reachable vendor.
+        return (
+            list_price(vendor.base_price, requirement.quantity, start, end),
+            {"fallback": True, "reason": str(exc), "available": False},
+            False,
+        )
 
 
 async def _find_vendors(requirement_id: str, exclude_vendor_ids: list[str] | None = None) -> dict:
@@ -83,12 +95,13 @@ async def _find_vendors(requirement_id: str, exclude_vendor_ids: list[str] | Non
                     session, actor=AGENT, action="vendor_fallback",
                     entity_type="offer", entity_id=offer.id,
                     payload={"vendor_id": str(vendor.id), "price": price,
-                             "reason": terms.get("reason", "")},
+                             "reason": terms.get("reason", ""), "available": available,
+                             "priced_as": "list_price"},
                 )
             offers.append({
                 "offer_id": str(offer.id), "vendor_id": str(vendor.id),
                 "vendor_name": vendor.name, "price": str(price),
-                "terms": terms, "rank": rank,
+                "terms": terms, "rank": rank, "available": available,
             })
 
         await write_audit(
