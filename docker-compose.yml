@@ -1,0 +1,112 @@
+name: cinexchange
+
+x-app: &app
+  build: .
+  env_file: [.env]
+  depends_on:
+    postgres: {condition: service_healthy}
+
+# Compose services reach postgres/clickhouse over the compose network, at their
+# in-network DNS names and default ports. .env's DATABASE_URL/CLICKHOUSE_URL are
+# host-oriented (see docker-compose port note below), so every DB-touching
+# service overrides both here to take precedence over the env_file value.
+x-db-env: &db-env
+  DATABASE_URL: postgresql+asyncpg://cinex:cinex@postgres:5432/cinex
+  CLICKHOUSE_URL: http://clickhouse:8123
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: cinex
+      POSTGRES_PASSWORD: cinex
+      POSTGRES_DB: cinex
+    # Published on 5433, not 5432: a native PostgreSQL 17 Windows service already
+    # owns host port 5432 on this machine. Only the host-side mapping changes -
+    # inside the compose network every service still reaches postgres:5432.
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinex"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ports: ["8123:8123", "9000:9000"]
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      # "localhost" resolves ::1 first inside this container, and this Docker
+      # Desktop network has no working IPv6 loopback, so wget gets "connection
+      # refused" even though the server is up and listening fine on 0.0.0.0.
+      # 127.0.0.1 sidesteps the resolver entirely.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  orchestrator:
+    <<: *app
+    environment:
+      <<: *db-env
+      SERVICE: orchestrator
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+  producer-agent:
+    <<: *app
+    environment:
+      <<: *db-env
+      SERVICE: producer-agent
+    ports: ["8001:8001"]
+
+  scout-agent:
+    <<: *app
+    environment:
+      <<: *db-env
+      SERVICE: scout-agent
+    ports: ["8002:8002"]
+
+  negotiation-agent:
+    <<: *app
+    environment:
+      <<: *db-env
+      SERVICE: negotiation-agent
+    ports: ["8003:8003"]
+
+  compliance-agent:
+    <<: *app
+    environment:
+      <<: *db-env
+      SERVICE: compliance-agent
+    ports: ["8004:8004"]
+
+  # TODO(Task 19): uncomment once services/recovery_agent exists.
+  # Until then this module import fails at container start and the service
+  # restart-loops forever, which just adds noise to `docker compose ps` -
+  # commented out so the rest of the stack comes up clean. /healthz correctly
+  # reports "recovery" as unreachable while this stays commented.
+  # recovery-agent:
+  #   <<: *app
+  #   environment:
+  #     <<: *db-env
+  #     SERVICE: recovery-agent
+  #   ports: ["8005:8005"]
+
+  vendor-mock-1:
+    <<: *app
+    environment: {SERVICE: vendor-mock, PORT: 9001}
+    ports: ["9001:9001"]
+
+  vendor-mock-2:
+    <<: *app
+    environment: {SERVICE: vendor-mock, PORT: 9002}
+    ports: ["9002:9002"]
+
+  vendor-mock-3:
+    <<: *app
+    environment: {SERVICE: vendor-mock, PORT: 9003}
+    ports: ["9003:9003"]
