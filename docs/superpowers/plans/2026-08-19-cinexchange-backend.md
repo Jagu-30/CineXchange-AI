@@ -599,9 +599,9 @@ Note: `audit_log.timestamp` from the spec is served by the inherited `created_at
 
 ```python
 # cinex/db/session.py
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -609,14 +609,31 @@ from cinex.config import get_settings
 from cinex.db.models import Base
 
 
-@lru_cache
+# A plain @lru_cache would bind the asyncpg pool to whichever event loop created it.
+# Production has one long-lived uvicorn loop so that is invisible, but pytest-asyncio
+# gives each test its own loop, and the second test would hand asyncpg a closed loop.
+# Cache per running loop instead.
+_engine: AsyncEngine | None = None
+_engine_loop: asyncio.AbstractEventLoop | None = None
+_sessionmaker: async_sessionmaker[AsyncSession] | None = None
+
+
 def get_engine() -> AsyncEngine:
-    return create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    global _engine, _engine_loop, _sessionmaker
+    loop = asyncio.get_running_loop()
+    if _engine is None or _engine_loop is not loop:
+        _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+        _engine_loop = loop
+        _sessionmaker = None
+    return _engine
 
 
-@lru_cache
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(get_engine(), class_=AsyncSession, expire_on_commit=False)
+    global _sessionmaker
+    engine = get_engine()
+    if _sessionmaker is None:
+        _sessionmaker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return _sessionmaker
 
 
 @asynccontextmanager
@@ -727,14 +744,21 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from cinex.db.models import Base, Production
-
 import os
+
+from cinex.db.models import Base, Production
 
 DSN = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+asyncpg://cinex:cinex@localhost:5433/cinex_test",
 )
+
+# Agent code reaches the DB through session_scope(), which resolves DATABASE_URL via
+# get_settings() - without this it would write to a different physical database than
+# the fixture just seeded. Force rather than setdefault: the fixture calls drop_all,
+# so the suite must be structurally incapable of targeting anything but the test DB.
+# Developers retarget via TEST_DATABASE_URL, which DSN reads above.
+os.environ["DATABASE_URL"] = DSN
 
 
 @pytest.fixture
