@@ -125,3 +125,127 @@ async def test_active_recovery_event_short_circuits_without_calling_the_agent(
 async def test_recovery_requires_auth(client, production):
     r = await client.post(f"/productions/{production.id}/recovery", json={})
     assert r.status_code == 403
+
+
+# --- C1: a producer decision on a RECOVERY approval must not take the happy path ---
+
+
+@pytest.fixture
+def recovery_routing(monkeypatch):
+    """Route the orchestrator's resolve_recovery MCP hop into the real agent code.
+
+    The point of these tests is the routing decision plus the state it leaves
+    behind, so the tool body has to be the real one - a canned dict would prove
+    nothing about the recovery_events row.
+    """
+    from services.orchestrator import main
+    from services.recovery_agent.main import _resolve_recovery
+
+    calls = []
+
+    async def fake_call(agent, tool, args):
+        calls.append((agent, tool, args))
+        if tool == "resolve_recovery":
+            return await _resolve_recovery(args["production_id"], args["decision"])
+        raise AssertionError(f"unexpected tool {tool}")
+
+    agents = AsyncMock()
+    agents.call = AsyncMock(side_effect=fake_call)
+    monkeypatch.setattr(main, "get_agents", lambda: agents)
+    return calls
+
+
+async def _awaiting_recovery(session, production, price=Decimal("2300.00")):
+    """A production parked exactly where recovery step 7 leaves it."""
+    from cinex.db.models import Approval
+
+    replacement = await _make_confirmed_booking(session, production, price)
+    event = RecoveryEvent(
+        production_id=production.id, trigger="vendor_unavailable",
+        affected_booking_id=replacement.id, resolution_booking_id=replacement.id,
+        status="awaiting_approval",
+        timeline=[{"step": n, "name": "s", "ts": "x", "detail": {}} for n in range(1, 8)],
+    )
+    approval = Approval(
+        production_id=production.id, requested_by_agent="recovery-agent",
+        reason="recovery:threshold_breached", threshold_breached=True,
+        delta_amount=Decimal("400.00"),
+    )
+    production.status = "awaiting_approval"
+    session.add_all([event, approval])
+    await session.commit()
+    await session.refresh(event)
+    await session.refresh(approval)
+    return event, approval, replacement
+
+
+async def test_approving_a_recovery_resolves_the_event_and_skips_the_happy_path(
+    client, auth, session, production, recovery_routing,
+):
+    from services.orchestrator import main
+
+    event, approval, _ = await _awaiting_recovery(session, production)
+
+    r = await client.post(f"/approvals/{approval.id}/decide", headers=auth,
+                          json={"decision": "approved"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "recovery"
+
+    await session.refresh(event)
+    await session.refresh(production)
+    assert event.status == "resolved", "an approved recovery must leave awaiting_approval"
+    assert production.status == "booked"
+    main.resume_after_approval.assert_not_awaited()
+    assert [tool for _, tool, _ in recovery_routing] == ["resolve_recovery"]
+
+
+async def test_rejecting_a_recovery_fails_the_event_and_leaves_the_swap_in_place(
+    client, auth, session, production, recovery_routing,
+):
+    from cinex.db.models import AuditLog
+
+    event, approval, replacement = await _awaiting_recovery(session, production)
+
+    r = await client.post(f"/approvals/{approval.id}/decide", headers=auth,
+                          json={"decision": "rejected"})
+    assert r.status_code == 200, r.text
+
+    await session.refresh(event)
+    await session.refresh(production)
+    await session.refresh(replacement)
+    assert event.status == "failed"
+    assert production.status == "failed"
+    assert replacement.status == "confirmed", \
+        "the vendor was already told; nothing may be silently un-booked"
+
+    audits = (await session.execute(select(AuditLog))).scalars().all()
+    rejected = [a for a in audits if a.action == "recovery_rejected"]
+    assert len(rejected) == 1, "the rejected-after-swap state must be explicit in the trace"
+    assert rejected[0].payload["production_status"] == "failed"
+
+
+async def test_a_second_recovery_can_be_triggered_once_the_first_resolves(
+    client, auth, session, production, recovery_routing,
+):
+    event, approval, replacement = await _awaiting_recovery(session, production)
+
+    blocked = await client.post(f"/productions/{production.id}/recovery",
+                                headers=auth, json={})
+    assert blocked.json()["outcome"] == "already_in_progress"
+
+    await client.post(f"/approvals/{approval.id}/decide", headers=auth,
+                      json={"decision": "approved"})
+
+    recovery_routing.clear()
+
+    async def resolved_recovery(agent, tool, args):
+        return {"recovery_event_id": str(uuid.uuid4()), "timeline": [], "outcome": "resolved"}
+
+    from services.orchestrator import main
+    main.get_agents().call.side_effect = resolved_recovery
+
+    again = await client.post(f"/productions/{production.id}/recovery",
+                              headers=auth, json={})
+    assert again.status_code == 200, again.text
+    assert again.json()["outcome"] != "already_in_progress", \
+        "a resolved recovery must not lock the production out of the next one"

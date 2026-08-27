@@ -30,4 +30,7 @@ async def test_orchestrator_reports_every_agents_tools():
     assert agents["scout"] == ["find_vendors"]
     assert agents["negotiation"] == ["negotiate"]
     assert sorted(agents["compliance"]) == ["check_compliance", "request_approval"]
-    assert agents["recovery"] == ["recover"]
+    # resolve_recovery was added with the C1 fix: a producer decision on a recovery
+    # approval is routed back to the agent that owns recovery_events, rather than
+    # into the happy-path resume (which left the event awaiting_approval forever).
+    assert sorted(agents["recovery"]) == ["recover", "resolve_recovery"]

@@ -182,3 +182,128 @@ async def test_the_brief_is_never_resubmitted(session, booked, replacement_agent
         _, tool, args = call.args
         assert tool != "decompose_brief"
         assert "brief_text" not in args and "text" not in args
+
+
+# --- C2: a mid-run failure must leave a readable partial artifact, not a lockout ---
+
+
+async def test_a_failure_at_step_3_leaves_a_partial_timeline_and_a_failed_event(
+    session, booked, replacement_agents, monkeypatch,
+):
+    """The demo's artifact is the timeline. A crash must not erase it.
+
+    Step 3 is the first step that writes outside recovery_events (the booking
+    swap), so it is the sharpest place to prove the per-step commits: steps 1
+    and 2 have to survive it.
+    """
+    from services.recovery_agent import main
+    production, booking, *_ = booked
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("recalculation blew up")
+
+    monkeypatch.setattr(main, "total_cost", boom)
+
+    with pytest.raises(RuntimeError):
+        await main._recover(str(production.id), str(booking.id), "vendor_unavailable")
+
+    event = (await session.execute(
+        select(RecoveryEvent).where(RecoveryEvent.production_id == production.id)
+    )).scalar_one()
+    assert event.status == "failed", \
+        "an event stranded in_progress is a permanent lockout on future recovery"
+
+    names = [entry["name"] for entry in event.timeline]
+    assert names[:2] == ["find_replacement", "negotiate_replacement"], \
+        "steps 1-2 committed as they completed and must survive the step-3 crash"
+    assert names[-1] == "failed"
+    assert "recalculation blew up" in event.timeline[-1]["detail"]["error"]
+
+    await session.refresh(production)
+    assert production.status == "booked", "never left in the non-terminal 'recovering'"
+
+
+async def test_the_failure_is_audited_not_silent(session, booked, replacement_agents, monkeypatch):
+    from cinex.db.models import AuditLog
+    from services.recovery_agent import main
+    production, booking, *_ = booked
+
+    monkeypatch.setattr(main, "total_cost", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("nope")))
+
+    with pytest.raises(RuntimeError):
+        await main._recover(str(production.id), str(booking.id), "vendor_unavailable")
+
+    actions = [a.action for a in (await session.execute(
+        select(AuditLog).order_by(AuditLog.seq)
+    )).scalars().all()]
+    assert "recovery.find_replacement" in actions
+    assert "recovery.negotiate_replacement" in actions
+    assert "recovery.failed" in actions
+
+
+async def test_recovery_can_be_retried_after_a_failure(
+    session, booked, replacement_agents, monkeypatch,
+):
+    """The guard exists to stop a fumbled re-trigger forking state, not to block
+    the retry. Before the fix, the one condition that needs a retry was the one
+    condition the guard permanently forbade."""
+    from services.recovery_agent import main
+    production, booking, *_ = booked
+
+    real_total_cost = main.total_cost
+    monkeypatch.setattr(main, "total_cost", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("nope")))
+    with pytest.raises(RuntimeError):
+        await main._recover(str(production.id), str(booking.id), "vendor_unavailable")
+
+    monkeypatch.setattr(main, "total_cost", real_total_cost)
+    retry = await main._recover(str(production.id), str(booking.id), "vendor_unavailable")
+    assert retry["outcome"] != "already_in_progress", "the retry path must not be blocked"
+    assert retry["outcome"] == "awaiting_approval"
+
+    events = (await session.execute(
+        select(RecoveryEvent).where(RecoveryEvent.production_id == production.id)
+    )).scalars().all()
+    assert {e.status for e in events} == {"failed", "awaiting_approval"}
+
+
+# --- I5: losing the unique-index race is an answer, not a 500 ---
+
+
+async def test_losing_the_idempotency_race_returns_already_in_progress(
+    session, booked, replacement_agents, monkeypatch,
+):
+    """Two concurrent triggers both pass the SELECT; the partial unique index
+    rejects the second INSERT. That IntegrityError used to escape as a 500 with
+    no audit row - the guard worked, the error path built on it did not.
+
+    The TOCTOU window is simulated by blinding the guard read exactly once,
+    which is precisely what a concurrent commit does to it.
+    """
+    from cinex.db.models import AuditLog
+    from services.recovery_agent import main
+    production, booking, *_ = booked
+
+    first = await main._recover(str(production.id), str(booking.id), "vendor_unavailable")
+
+    real_active = main._active_event
+    blinded = {"used": False}
+
+    async def blind_once(session_, pid):
+        if not blinded["used"]:
+            blinded["used"] = True
+            return None
+        return await real_active(session_, pid)
+
+    monkeypatch.setattr(main, "_active_event", blind_once)
+
+    second = await main._recover(str(production.id), str(booking.id), "vendor_unavailable")
+    assert second["outcome"] == "already_in_progress"
+    assert second["recovery_event_id"] == first["recovery_event_id"]
+
+    events = (await session.execute(
+        select(RecoveryEvent).where(RecoveryEvent.production_id == production.id)
+    )).scalars().all()
+    assert len(events) == 1, "the loser's row must not survive"
+
+    actions = [a.action for a in (await session.execute(select(AuditLog))).scalars().all()]
+    assert "recovery.already_in_progress" in actions, "the race must be visible in the trace"

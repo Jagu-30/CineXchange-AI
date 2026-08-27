@@ -144,3 +144,110 @@ async def test_agent_failure_marks_the_production_failed(session, production, mo
     assert production.status == "failed"
     steps = await read_steps(session, production.id)
     assert any(s.status == "failed" for s in steps), "a failure must be visible on the stream"
+
+
+# --- I4: a terminal status must never be visible before the rows that explain it ---
+
+
+async def test_terminal_status_and_its_final_step_rows_commit_together(session, wired, monkeypatch):
+    """Atomicity, proved by breaking the last write.
+
+    If step 10's `terminal` row and `production.status = "booked"` share one
+    transaction, killing the row must take the status with it. Before the fix
+    the status had already committed two transactions earlier, so an SSE poll
+    landing in that window closed the stream without ever sending step 10.
+    """
+    from services.orchestrator import pipeline
+    production, _, _ = wired
+    real_emit = pipeline.emit_step
+
+    async def boom(sess, pid, number, name, status, detail=None):
+        if number == 10 and status == "terminal":
+            raise RuntimeError("crash after the status flip")
+        return await real_emit(sess, pid, number, name, status, detail)
+
+    monkeypatch.setattr(pipeline, "emit_step", boom)
+    await pipeline.run_happy_path(production.id)
+
+    await session.refresh(production)
+    assert production.status != "booked", \
+        "status must not survive a transaction whose step rows did not"
+
+    steps = await read_steps(session, production.id)
+    assert not [s for s in steps if s.step == 10 and s.status == "done"], \
+        "the step-10 done row went back with the same transaction"
+
+
+async def test_failure_reason_and_failed_status_commit_together(session, production, monkeypatch):
+    """_fail's payload carries the *reason*. Committing the status first let the
+    stream close having never told the producer why."""
+    from cinex.mcp_client import AgentUnavailable
+    from services.orchestrator import pipeline
+
+    agents = AsyncMock()
+    agents.call = AsyncMock(side_effect=AgentUnavailable("producer-agent down"))
+    monkeypatch.setattr(pipeline, "get_agents", lambda: agents)
+
+    real_emit = pipeline.emit_step
+
+    async def boom(sess, pid, number, name, status, detail=None):
+        if status == "failed":
+            raise RuntimeError("crash after the status flip")
+        return await real_emit(sess, pid, number, name, status, detail)
+
+    monkeypatch.setattr(pipeline, "emit_step", boom)
+    with pytest.raises(RuntimeError):
+        await pipeline.run_happy_path(production.id)
+
+    await session.refresh(production)
+    assert production.status != "failed", \
+        "a failed status without its reason row must not be visible"
+
+
+async def test_stream_emits_every_step_row_that_exists_before_it_ends(session, wired, monkeypatch):
+    """The SSE contract: /events and /status cannot disagree."""
+    import asyncio
+    import json
+
+    import httpx
+
+    from services.orchestrator import main as api
+    from services.orchestrator import pipeline
+    production, _, _ = wired
+
+    monkeypatch.setattr(api, "SSE_POLL_SECONDS", 0.02)
+    emitted: list[int] = []
+
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://api", timeout=60) as c:
+        async def drive():
+            await asyncio.sleep(0.05)
+            await pipeline.run_happy_path(production.id)
+
+        task = asyncio.create_task(drive())
+        async with c.stream("GET", f"/productions/{production.id}/events") as response:
+            async for line in response.aiter_lines():
+                if line.startswith("data: ") and "\"seq\"" in line:
+                    emitted.append(json.loads(line[len("data: "):])["seq"])
+                if line.startswith("event: end"):
+                    break
+        await task
+
+    steps = await read_steps(session, production.id)
+    assert steps, "the pipeline must have produced step rows"
+    assert emitted == [s.seq for s in steps], (
+        "the stream closed without emitting every step row /status would show: "
+        f"missing {sorted(set(s.seq for s in steps) - set(emitted))}"
+    )
+
+
+# --- I8: one definition of total cost, shared ---
+
+
+def test_orchestrator_and_recovery_share_one_total_cost_definition():
+    from cinex.costing import total_cost
+    from services.orchestrator import pipeline
+    from services.recovery_agent import main as recovery
+
+    assert pipeline.total_cost is total_cost
+    assert recovery.total_cost is total_cost

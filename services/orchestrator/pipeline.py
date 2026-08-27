@@ -5,13 +5,13 @@ pretending to be five agents - each numbered step below is a real network hop.
 """
 import asyncio
 import uuid
-from decimal import Decimal
 
 from sqlalchemy import select
 
 from cinex.audit import write_audit
 from cinex.config import get_settings
-from cinex.db.models import Approval, Booking, Offer, Production, Requirement
+from cinex.costing import total_cost
+from cinex.db.models import Booking, Offer, Production, Requirement
 from cinex.db.session import session_scope
 from cinex.logging import get_logger
 from cinex.mcp_client import AgentUnavailable, get_agents
@@ -72,16 +72,6 @@ async def create_bookings(session, production_id: uuid.UUID) -> list[Booking]:
         await session.flush()
         made.append(booking)
     return made
-
-
-async def _total_cost(session, production_id: uuid.UUID) -> Decimal:
-    requirement_ids = (await session.execute(
-        select(Requirement.id).where(Requirement.production_id == production_id)
-    )).scalars().all()
-    winners = (await session.execute(
-        select(Offer.price).where(Offer.requirement_id.in_(requirement_ids), Offer.is_winner.is_(True))
-    )).scalars().all()
-    return sum(winners, Decimal("0"))
 
 
 async def run_happy_path(production_id: uuid.UUID) -> None:
@@ -156,7 +146,7 @@ async def run_happy_path(production_id: uuid.UUID) -> None:
         current = 7
         await _step(production_id, 7, "in_progress")
         async with session_scope() as session:
-            total = await _total_cost(session, production_id)
+            total = await total_cost(session, production_id)
             production = (await session.execute(
                 select(Production).where(Production.id == production_id)
             )).scalar_one()
@@ -195,13 +185,22 @@ async def run_happy_path(production_id: uuid.UUID) -> None:
                 "delta_amount": str(decision.delta_amount),
                 "threshold_breached": decision.threshold_breached,
             })
-            await _set_status(production_id, "awaiting_approval", 9)
-            await _step(production_id, 9, "done", {
-                "approval_required": True, "approval_id": approval["approval_id"],
-                "reasons": decision.reasons, "delta_amount": str(decision.delta_amount),
-                "delta_pct": round(decision.delta_pct, 2),
-            })
-            await _step(production_id, 9, "in_progress", {"waiting_on": "producer"})
+            # One transaction: "awaiting_approval" is a TERMINAL status for the
+            # SSE loop, so it must not become visible before the rows that
+            # explain it. See _book for the same rule.
+            async with session_scope() as session:
+                production = (await session.execute(
+                    select(Production).where(Production.id == production_id)
+                )).scalar_one()
+                production.status = "awaiting_approval"
+                production.current_step = 9
+                await emit_step(session, production_id, 9, _NAMES[9], "done", {
+                    "approval_required": True, "approval_id": approval["approval_id"],
+                    "reasons": decision.reasons, "delta_amount": str(decision.delta_amount),
+                    "delta_pct": round(decision.delta_pct, 2),
+                })
+                await emit_step(session, production_id, 9, _NAMES[9], "in_progress",
+                                {"waiting_on": "producer"})
             log.info("parked_for_approval", extra={"production_id": str(production_id)})
             return
         await _step(production_id, 9, "done", {"approval_required": False})
@@ -220,7 +219,7 @@ async def _book(production_id: uuid.UUID) -> None:
     await _step(production_id, 10, "in_progress")
     async with session_scope() as session:
         made = await create_bookings(session, production_id)
-        total = await _total_cost(session, production_id)
+        total = await total_cost(session, production_id)
         production = (await session.execute(
             select(Production).where(Production.id == production_id)
         )).scalar_one()
@@ -230,22 +229,38 @@ async def _book(production_id: uuid.UUID) -> None:
         await write_audit(session, actor=ACTOR, action="create_bookings",
                           entity_type="production", entity_id=production_id,
                           payload={"bookings": [str(b.id) for b in made], "total_cost": total})
-    await _step(production_id, 10, "done", {"bookings": len(made), "total_cost": str(total)})
-    # A second, distinct row: the terminal marker the SSE consumer closes the
-    # stream on. Deliberately a different status than "done" - both are real
-    # audit_log rows (neither is cosmetic), but read_steps' "done, in order"
-    # view of the ten canonical steps must see exactly one row per step, so
-    # this one is tagged "terminal" rather than re-using "done".
-    await _step(production_id, 10, "terminal", {"terminal": "booked"})
+        # The terminal status and the rows that describe reaching it commit
+        # together. Previously status="booked" landed first and the step-10
+        # rows followed in two later transactions, so an SSE poll landing in
+        # that window saw a terminal status, emitted `event: end` and returned
+        # without ever sending step 10 - while /status showed it. The two
+        # projections the SSE docstring promises "cannot disagree" did.
+        await emit_step(session, production_id, 10, _NAMES[10], "done",
+                        {"bookings": len(made), "total_cost": str(total)})
+        # A second, distinct row: the terminal marker the SSE consumer closes the
+        # stream on. Deliberately a different status than "done" - both are real
+        # audit_log rows (neither is cosmetic), but read_steps' "done, in order"
+        # view of the ten canonical steps must see exactly one row per step, so
+        # this one is tagged "terminal" rather than re-using "done".
+        await emit_step(session, production_id, 10, _NAMES[10], "terminal",
+                        {"terminal": "booked"})
 
 
 async def _fail(production_id: uuid.UUID, step: int, reason: str) -> None:
-    await _set_status(production_id, "failed", step)
+    # Same ordering rule as _book, and it matters more here: the failure reason
+    # rides on the step row. Committing status="failed" first let the stream
+    # close without ever telling the producer why.
     async with session_scope() as session:
+        production = (await session.execute(
+            select(Production).where(Production.id == production_id)
+        )).scalar_one()
+        production.status = "failed"
+        production.current_step = step
         await write_audit(session, actor=ACTOR, action="pipeline_failed",
                           entity_type="production", entity_id=production_id,
                           payload={"step": step, "reason": reason})
-    await _step(production_id, step, "failed", {"reason": reason})
+        await emit_step(session, production_id, step, _NAMES[step], "failed",
+                        {"reason": reason})
 
 
 async def resume_after_approval(production_id: uuid.UUID) -> None:

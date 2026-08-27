@@ -146,6 +146,14 @@ async def events(production_id: uuid.UUID) -> StreamingResponse:
                 cursor = event.seq
                 yield event.sse()
             if production in TERMINAL:
+                # Belt and braces on top of the pipeline's commit ordering:
+                # drain whatever step rows exist before closing, so the stream
+                # can never end having skipped a step /status would show.
+                async with session_scope() as session:
+                    tail = await read_steps(session, production_id, after_seq=cursor)
+                for event in tail:
+                    cursor = event.seq
+                    yield event.sse()
                 yield f"event: end\ndata: {{\"status\": \"{production}\"}}\n\n"
                 return
             await asyncio.sleep(SSE_POLL_SECONDS)
@@ -199,22 +207,99 @@ async def decide(
         approval.producer_decision = body.decision
         approval.decided_at = datetime.now(timezone.utc)
         production_id = approval.production_id
+        reason = approval.reason or ""
+
+        # Which kind of approval is this? A recovery approval must NOT be routed
+        # into the happy-path resume: that would re-run _book (duplicating the
+        # step-10 rows) and leave the recovery_events row in `awaiting_approval`
+        # forever - which, being inside the partial unique index predicate,
+        # locks the production out of every future recovery. The authority is
+        # the recovery_events row; the `recovery:` reason prefix corroborates it.
+        recovery_event = (await session.execute(
+            select(RecoveryEvent)
+            .where(RecoveryEvent.production_id == production_id,
+                   RecoveryEvent.status == "awaiting_approval")
+            .order_by(RecoveryEvent.created_at.desc())
+        )).scalars().first()
+        is_recovery = recovery_event is not None
 
         await write_audit(session, actor="producer", action=f"approval_{body.decision}",
                           entity_type="approval", entity_id=approval_id,
-                          payload={"production_id": str(production_id)})
+                          payload={"production_id": str(production_id),
+                                   "kind": "recovery" if is_recovery else "happy_path",
+                                   "recovery_event_id": (
+                                       str(recovery_event.id) if is_recovery else None),
+                                   "reason_prefix_corroborates":
+                                       reason.startswith("recovery:")})
 
-        if body.decision == "rejected":
+        if body.decision == "rejected" and not is_recovery:
             production = (await session.execute(
                 select(Production).where(Production.id == production_id)
             )).scalar_one()
             production.status = "failed"
 
-    if body.decision == "approved":
+    if is_recovery:
+        await _settle_recovery(production_id, body.decision)
+    elif body.decision == "approved":
         background.add_task(resume_after_approval, production_id)
 
     return {"approval_id": str(approval_id), "decision": body.decision,
-            "production_id": str(production_id)}
+            "production_id": str(production_id),
+            "kind": "recovery" if is_recovery else "happy_path"}
+
+
+async def _settle_recovery(production_id: uuid.UUID, decision: str) -> None:
+    """Close out a producer decision that belongs to a recovery.
+
+    `recovery_events` belongs to recovery-agent, so the state change goes over
+    MCP; `productions` is ours, so the terminal status is set here.
+
+    On approval the replacement stands and the production is `booked` again. On
+    rejection the swap has *already* happened - the old booking is superseded,
+    the new one confirmed, and the replacement vendor has been told - so nothing
+    is silently un-booked: the replacement stays, the event goes to `failed`,
+    the production goes to `failed`, and an audit row says exactly that so a
+    human can pick it up.
+    """
+    approved = decision == "approved"
+    try:
+        result = await get_agents().call("recovery", "resolve_recovery", {
+            "production_id": str(production_id), "decision": decision,
+        })
+    except Exception as exc:  # noqa: BLE001 - nothing may fail silently
+        async with session_scope() as session:
+            await write_audit(session, actor="orchestrator",
+                              action="recovery_resolution_failed",
+                              entity_type="production", entity_id=production_id,
+                              payload={"decision": decision, "error": str(exc)})
+        log.error("recovery_resolution_failed",
+                  extra={"production_id": str(production_id), "error": str(exc)})
+        raise HTTPException(status_code=503,
+                            detail="recovery agent could not resolve the recovery") from exc
+
+    async with session_scope() as session:
+        production = (await session.execute(
+            select(Production).where(Production.id == production_id)
+        )).scalar_one()
+        production.status = "booked" if approved else "failed"
+        await write_audit(
+            session, actor="orchestrator",
+            action="recovery_approved" if approved else "recovery_rejected",
+            entity_type="production", entity_id=production_id,
+            payload={
+                "recovery_event_id": result.get("recovery_event_id"),
+                "recovery_outcome": result.get("outcome"),
+                "production_status": production.status,
+                "note": (
+                    "recovery approved; replacement booking stands"
+                    if approved else
+                    "recovery rejected AFTER the swap was committed. The replacement "
+                    "booking is left confirmed and the superseded booking stays "
+                    "superseded - the vendor was already told. The production is "
+                    "marked failed for human follow-up."
+                ),
+            },
+        )
 
 
 @app.post("/productions/{production_id}/recovery")

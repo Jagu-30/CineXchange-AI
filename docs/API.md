@@ -286,9 +286,25 @@ HTTP/1.1 404 Not Found
 `409` if the approval was already decided (`{"detail": "already decided"}`) — read from
 `services/orchestrator/main.py`, not captured live (requires a prior decision to already exist).
 
-On success: `{"approval_id": ..., "decision": ..., "production_id": ...}`. `"approved"` resumes the
-pipeline at step 10 (booking) as a background task — the original brief is never resubmitted.
-`"rejected"` marks the production `failed` and books nothing.
+On success: `{"approval_id": ..., "decision": ..., "production_id": ..., "kind": ...}`.
+
+`kind` is `"happy_path"` or `"recovery"`, and the two behave differently:
+
+- **`happy_path`** — `"approved"` resumes the pipeline at step 10 (booking) as a background task;
+  the original brief is never resubmitted. `"rejected"` marks the production `failed` and books
+  nothing.
+- **`recovery`** — the approval belongs to a recovery that is parked at step 7 (the orchestrator
+  detects an active `recovery_events` row for the production; a `recovery:`-prefixed `reason`
+  corroborates it). `"approved"` asks `recovery-agent` to resolve the event and puts the production
+  back to `booked` — it does **not** re-run booking. `"rejected"` fails the event and the
+  production, but the replacement booking **stays confirmed**: the swap was already committed and
+  the replacement vendor already told, so nothing is silently un-booked. A `recovery_rejected`
+  `audit_log` row records exactly that for human follow-up.
+
+Either way the recovery event leaves `awaiting_approval`, so the production can be recovered again.
+`503` if `recovery-agent` cannot be reached to resolve the event (the decision itself is still
+recorded, and the failure is audited as `recovery_resolution_failed`).
+
 *(illustrative, not captured — requires a production to have reached `awaiting_approval`)*
 
 ---
@@ -309,7 +325,7 @@ Captured response:
     "scout": ["find_vendors"],
     "negotiation": ["negotiate"],
     "compliance": ["check_compliance", "request_approval"],
-    "recovery": ["recover"]
+    "recovery": ["recover", "resolve_recovery"]
   }
 }
 ```
