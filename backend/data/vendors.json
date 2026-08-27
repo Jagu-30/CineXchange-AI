@@ -1,0 +1,62 @@
+[
+  {
+    "vendor_id": "V001",
+    "vendor_name": "LightForge Rentals",
+    "location": "Bengaluru, Karnataka",
+    "distance_km": 340,
+    "rating": 4.8,
+    "reliability_score": 96.0,
+    "verified": true,
+    "insurance_included": true,
+    "specialties": ["Cinema Cameras", "Anamorphic Lenses", "Grip"],
+    "notes": "Premium production rental house with full transit insurance."
+  },
+  {
+    "vendor_id": "V002",
+    "vendor_name": "GlowLab Studio",
+    "location": "Mangaluru, Karnataka",
+    "distance_km": 115,
+    "rating": 4.7,
+    "reliability_score": 94.0,
+    "verified": true,
+    "insurance_included": true,
+    "specialties": ["Weatherproof LED Lighting", "Haze & Fog", "Generators"],
+    "notes": "Specialized in outdoor & rain shoot lighting fixtures."
+  },
+  {
+    "vendor_id": "V003",
+    "vendor_name": "ForestFrame Rentals",
+    "location": "Agumbe / Shivamogga Hub",
+    "distance_km": 12,
+    "rating": 4.9,
+    "reliability_score": 98.0,
+    "verified": true,
+    "insurance_included": true,
+    "specialties": ["Low-Light Cinema Packages", "Weather-Sealed Rigs", "Local Transit"],
+    "notes": "Top-tier local node rental house with low-light cinema cameras and on-site technician."
+  },
+  {
+    "vendor_id": "V004",
+    "vendor_name": "CineCore Rentals",
+    "location": "Udupi, Karnataka",
+    "distance_km": 48,
+    "rating": 4.6,
+    "reliability_score": 95.0,
+    "verified": true,
+    "insurance_included": true,
+    "specialties": ["Rapid Dispatch", "Backup Cameras", "Field Power"],
+    "notes": "24/7 on-call emergency dispatch depot."
+  },
+  {
+    "vendor_id": "V005",
+    "vendor_name": "CheapGear QuickRent",
+    "location": "Hubballi, Karnataka",
+    "distance_km": 210,
+    "rating": 3.8,
+    "reliability_score": 72.0,
+    "verified": false,
+    "insurance_included": false,
+    "specialties": ["Budget DSLRs", "Basic Grip"],
+    "notes": "Low cost vendor, but lacks mandatory on-site equipment insurance."
+  }
+]
