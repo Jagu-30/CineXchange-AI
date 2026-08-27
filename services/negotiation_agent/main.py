@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 from sqlalchemy import select
 
 from cinex.audit import write_audit
+from cinex.clickhouse import median_price
 from cinex.config import get_settings
 from cinex.db.models import Offer, Requirement, Vendor
 from cinex.db.session import session_scope
@@ -21,15 +22,18 @@ AGENT = "negotiation-agent"
 
 
 async def market_anchor(category: str) -> Decimal:
-    """Median market price. Task 19 replaces this body with the ClickHouse query."""
+    """Query 1 from ClickHouse. Falls back to the Postgres median only if the
+    analytics store has no history yet."""
+    anchor = await median_price(category)
+    if anchor > 0:
+        return anchor
     async with session_scope() as session:
         prices = (await session.execute(
             select(Vendor.base_price).where(Vendor.category == category)
         )).scalars().all()
     if not prices:
         return Decimal("0")
-    ordered = sorted(prices)
-    return ordered[len(ordered) // 2]
+    return sorted(prices)[len(prices) // 2]
 
 
 async def _negotiate_one(session, offer: Offer, vendor: Vendor, requirement: Requirement,

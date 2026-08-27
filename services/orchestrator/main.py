@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from cinex.audit import write_audit
 from cinex.auth import Producer, issue_demo_token, require_producer
+from cinex.clickhouse import init_clickhouse
 from cinex.config import get_settings
 from cinex.db.models import Approval, AuditLog, Booking, Production, RecoveryEvent
 from cinex.db.session import init_db, session_scope
@@ -29,7 +30,14 @@ TERMINAL = {"booked", "failed", "awaiting_approval"}
 async def lifespan(app: FastAPI):
     # FastAPI's @app.on_event("startup") is deprecated in favour of this lifespan
     # context manager (see task-17 brief); init_db() must still run once at startup.
+    # Task 21's brief shows this as an @app.on_event("startup") hook - folded into
+    # the existing lifespan handler instead, since Task 17 already replaced that
+    # pattern here.
     await init_db()
+    try:
+        await init_clickhouse()
+    except Exception as exc:  # noqa: BLE001 - analytics is optional to boot
+        log.warning("clickhouse_init_failed", extra={"error": str(exc)})
     yield
 
 

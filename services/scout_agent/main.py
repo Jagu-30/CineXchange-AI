@@ -7,6 +7,7 @@ from fastmcp import FastMCP
 from sqlalchemy import select
 
 from cinex.audit import write_audit
+from cinex.clickhouse import record_offer_event
 from cinex.db.models import Offer, Production, Requirement, Vendor
 from cinex.db.session import session_scope
 from cinex.http import VendorUnavailable, request_with_retry
@@ -76,6 +77,7 @@ async def _find_vendors(requirement_id: str, exclude_vendor_ids: list[str] | Non
             )
             session.add(offer)
             await session.flush()
+            await record_offer_event(requirement.category, vendor.id, price, "quote")
             if terms.get("fallback"):
                 await write_audit(
                     session, actor=AGENT, action="vendor_fallback",
