@@ -9,7 +9,7 @@ from jose import JWTError, jwt
 from cinex.config import get_settings
 
 ALGORITHM = "HS256"
-_bearer = HTTPBearer(auto_error=True)
+_bearer = HTTPBearer(auto_error=False)
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,14 @@ def verify_token(token: str) -> Producer:
 
 
 def require_producer(
-    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> Producer:
+    # The installed FastAPI's HTTPBearer(auto_error=True) raises 401 for a
+    # missing header, but this API's contract distinguishes "no credentials
+    # supplied at all" (403) from "credentials supplied but invalid/expired"
+    # (401, raised by verify_token below). auto_error=False plus this explicit
+    # check restores that distinction regardless of the installed version's
+    # default.
+    if creds is None:
+        raise HTTPException(status_code=403, detail="Not authenticated")
     return verify_token(creds.credentials)
