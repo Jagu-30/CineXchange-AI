@@ -1,6 +1,13 @@
 from decimal import Decimal
+
 import pytest
+from pydantic import ValidationError
+
 from cinex.config import Settings
+
+# Settings reads .env by default. These tests must not depend on whatever a
+# developer happens to have in theirs, so every construction here passes
+# _env_file=None and supplies its inputs explicitly.
 
 
 def _base(**over):
@@ -10,7 +17,7 @@ def _base(**over):
         gemini_model="m",
         jwt_secret="s",
     )
-    return Settings(**(defaults | over))
+    return Settings(_env_file=None, **(defaults | over))
 
 
 def test_demo_defaults():
@@ -29,5 +36,18 @@ def test_agent_urls_are_configurable():
 
 
 def test_missing_required_key_is_an_error():
-    with pytest.raises(Exception):
-        Settings(database_url="x", gemini_model="m", jwt_secret="s")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, database_url="x", gemini_model="m", jwt_secret="s")
+
+
+def test_defaults_are_not_read_from_a_developers_env_file():
+    """Guards the hermeticity the other tests rely on."""
+    s = _base(negotiation_max_rounds=7)
+    assert s.negotiation_max_rounds == 7
+    assert Settings(
+        _env_file=None,
+        database_url="x",
+        gemini_api_key="k",
+        gemini_model="m",
+        jwt_secret="s",
+    ).negotiation_max_rounds == 3

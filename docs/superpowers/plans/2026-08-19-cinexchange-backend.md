@@ -369,6 +369,7 @@ git commit -m "feat: project skeleton, config, structured logging, dependency AP
 ```python
 # tests/test_models.py
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -378,7 +379,12 @@ from cinex.db.models import Base, Offer, Production, Requirement, Vendor
 
 pytestmark = pytest.mark.integration
 
-DSN = "postgresql+asyncpg://cinex:cinex@localhost:5432/cinex_test"
+import os
+
+DSN = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://cinex:cinex@localhost:5433/cinex_test",
+)
 
 
 @pytest.fixture
@@ -399,8 +405,8 @@ async def test_production_defaults_and_money_precision(session):
         brief_text="a 3-day shoot in Lisbon",
         budget_cap=Decimal("120000.00"),
         location="Lisbon",
-        start_date="2026-09-01",
-        end_date="2026-09-03",
+        start_date=date(2026, 9, 1),
+        end_date=date(2026, 9, 3),
     )
     session.add(p)
     await session.commit()
@@ -414,7 +420,7 @@ async def test_production_defaults_and_money_precision(session):
 async def test_offer_belongs_to_requirement_and_vendor(session):
     p = Production(
         producer_id=uuid.uuid4(), brief_text="b", budget_cap=Decimal("1000.00"),
-        location="Lisbon", start_date="2026-09-01", end_date="2026-09-03",
+        location="Lisbon", start_date=date(2026, 9, 1), end_date=date(2026, 9, 3),
     )
     session.add(p)
     await session.flush()
@@ -718,7 +724,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from cinex.db.models import Base, Production
 
-DSN = "postgresql+asyncpg://cinex:cinex@localhost:5432/cinex_test"
+import os
+
+DSN = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://cinex:cinex@localhost:5433/cinex_test",
+)
 
 
 @pytest.fixture
