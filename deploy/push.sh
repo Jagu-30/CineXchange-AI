@@ -25,7 +25,11 @@ say "building the upload archive"
 # tar over ssh rather than `gcloud compute scp --recurse`: scp of a large tree
 # is slow and has no exclude flag, and node_modules/.venv/.git together dwarf
 # the actual source.
-TARBALL="$(mktemp -t cinex-XXXX.tar.gz)"
+# TMPDIR is forced to a volume with free space (see deploy/env.sh): the
+# default on this machine is C:, which is full, and the tarball fails to write.
+TMPDIR="${TMPDIR:-/tmp}"
+mkdir -p "$TMPDIR"
+TARBALL="$(mktemp -p "$TMPDIR" cinex-XXXX.tar.gz)"
 tar -czf "$TARBALL" -C "$ROOT" \
   --exclude='./node_modules' \
   --exclude='./.next' \
