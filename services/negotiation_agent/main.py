@@ -24,12 +24,13 @@ from sqlalchemy import select
 from cinex.audit import write_audit
 from cinex.clickhouse import median_price
 from cinex.config import get_settings
-from cinex.db.models import Offer, Requirement, Vendor
+from cinex.db.models import Offer, Production, Requirement, Vendor
 from cinex.db.session import session_scope
 from cinex.http import VendorUnavailable, request_with_retry
 from cinex.llm.gemini import get_llm
 from cinex.llm.prompts import negotiation as prompts
 from cinex.logging import get_logger
+from cinex.pricing import money, shoot_days
 from cinex.schemas.agents import NegotiationStrategy
 
 log = get_logger("negotiation-agent")
@@ -45,7 +46,12 @@ class _Candidate:
     vendor_id: uuid.UUID
     vendor_name: str
     vendor_rating: Decimal
-    vendor_base_price: Decimal
+    # Scaled to the WHOLE engagement (per-unit base x quantity x shoot
+    # days), not the per-unit-per-day base. The vendor derives both its ask
+    # and its reservation price from this, and /quote already quotes on the
+    # engagement basis - sending the raw base made the floor 3-4x too low, so
+    # every vendor accepted the opening offer and no negotiation ever happened.
+    vendor_engagement_base: Decimal
     endpoint: str
 
 
@@ -103,7 +109,7 @@ async def _negotiate_one(candidate: _Candidate, category: str,
             reply = await request_with_retry("POST", url, json={
                 "session_id": session_id, "round": round_no,
                 "price": str(counter), "terms": terms,
-                "base_price": str(candidate.vendor_base_price),
+                "base_price": str(candidate.vendor_engagement_base),
             })
         except VendorUnavailable as exc:
             outcome["reachable"] = False
@@ -190,6 +196,9 @@ async def _negotiate(requirement_id: str, offer_ids: list[str], max_rounds: int 
         requirement = (await session.execute(
             select(Requirement).where(Requirement.id == rid)
         )).scalar_one()
+        production = (await session.execute(
+            select(Production).where(Production.id == requirement.production_id)
+        )).scalar_one()
         offers = (await session.execute(
             select(Offer).where(Offer.id.in_(wanted))
         )).scalars().all()
@@ -204,7 +213,11 @@ async def _negotiate(requirement_id: str, offer_ids: list[str], max_rounds: int 
                 offer_id=o.id, price=o.price, vendor_id=o.vendor_id,
                 vendor_name=vendors[o.vendor_id].name,
                 vendor_rating=vendors[o.vendor_id].rating,
-                vendor_base_price=vendors[o.vendor_id].base_price,
+                vendor_engagement_base=money(
+                    vendors[o.vendor_id].base_price
+                    * requirement.quantity
+                    * shoot_days(production.start_date, production.end_date)
+                ),
                 endpoint=vendors[o.vendor_id].contact_meta["endpoint"],
             )
             for o in offers
