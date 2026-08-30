@@ -27,4 +27,18 @@ systemctl enable --now docker
 mkdir -p /opt/cinexchange
 chmod 0777 /opt/cinexchange
 
+
+# 4 GB of swap. `next build` is the memory spike in this stack and an OOM there
+# kills the deploy with a confusing exit code rather than a clear message. Swap
+# is far cheaper than sizing the whole VM for one build step.
+if [ ! -f /swapfile ]; then
+  fallocate -l 4G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# Last line on purpose: provision.sh polls for this file to know the VM is
+# ready. Writing it before swap existed would let a deploy start early.
 touch /var/log/cinex-startup-done
