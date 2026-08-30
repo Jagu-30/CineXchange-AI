@@ -36,6 +36,7 @@ tar -czf "$TARBALL" -C "$ROOT" \
   --exclude='./.venv' \
   --exclude='./.git' \
   --exclude='./.superpowers' \
+  --exclude='./.pytest_cache' \
   --exclude='./backend' \
   --exclude='*.pyc' \
   --exclude='__pycache__' \
@@ -46,60 +47,16 @@ say "uploading"
 gcloud compute scp "$TARBALL" "$VM:/tmp/cinex.tar.gz" --zone "$ZONE" --project "$PROJECT" --quiet
 rm -f "$TARBALL"
 
-say "unpacking and rewriting host-specific config"
-# .env is written for a laptop: DATABASE_URL points at localhost:5433 (the
-# host-published port) and FRONTEND_ORIGIN at localhost:3000. Inside compose the
-# datastore URLs are already overridden to in-network names, but the browser
-# origin and the frontend's view of the API are genuinely host-dependent, so
-# they are rewritten here rather than hardcoded in the repo.
-gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --quiet --command "
-  set -euo pipefail
-  mkdir -p $REMOTE
-  tar -xzf /tmp/cinex.tar.gz -C $REMOTE
-  rm -f /tmp/cinex.tar.gz
-  cd $REMOTE
+say "uploading the remote deploy script"
+# The remote half of the deploy is a FILE, not an inline --command string.
+# Inline scripts are expanded by the LOCAL shell before gcloud ever sees them,
+# so every $(...) resolves on the wrong machine and a stray parenthesis - even
+# inside a comment - breaks gcloud argument parsing. Three deploy failures came
+# from exactly that.
+gcloud compute scp "$HERE/remote-deploy.sh" "$VM:/tmp/remote-deploy.sh"   --zone "$ZONE" --project "$PROJECT" --quiet
 
-  sed -i 's|^FRONTEND_ORIGIN=.*|FRONTEND_ORIGIN=http://$IP:3000|' .env
-  grep -q '^NEXT_PUBLIC_API_BASE_URL=' .env \
-    && sed -i 's|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$IP:8000|' .env \
-    || echo 'NEXT_PUBLIC_API_BASE_URL=http://$IP:8000' >> .env
-
-  echo '--- effective host config ---'
-  grep -E '^(FRONTEND_ORIGIN|NEXT_PUBLIC_API_BASE_URL|GEMINI_MODEL|GEMINI_USE_VERTEX)=' .env
-"
-
-say "building and starting the stack on the VM"
-gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --quiet --command "
-  set -euo pipefail
-  cd $REMOTE
-  sudo docker compose up -d --build
-  sudo docker compose ps
-"
-
-say "waiting for the orchestrator to answer"
-# compose up -d returns as soon as containers are CREATED, not when the app
-# inside is serving. Seeding immediately races the first request and fails on a
-# connection refused, so poll /healthz first.
-gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --quiet --command "
-  for i in \$(seq 1 60); do
-    if curl -sf --max-time 5 localhost:8000/healthz >/dev/null 2>&1; then
-      echo \"orchestrator ready after ~\$((i * 5))s\"; exit 0
-    fi
-    sleep 5
-  done
-  echo 'orchestrator did not answer within 300s'
-  cd /opt/cinexchange && sudo docker compose logs --tail 40 orchestrator
-  exit 1
-"
-
-say "seeding vendors (idempotent)"
-gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --quiet --command "
-  cd $REMOTE && sudo docker compose exec -T orchestrator python -m seeds.seed
-"
-
-say "health"
-gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --quiet --command \
-  "curl -s --max-time 20 localhost:8000/healthz | head -c 2000; echo"
+say "deploying on the VM"
+gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --quiet   --command "bash /tmp/remote-deploy.sh $IP"
 
 cat <<EOF
 

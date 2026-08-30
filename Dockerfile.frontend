@@ -22,7 +22,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
-COPY --from=builder /app/public ./public
+# No `COPY /app/public` here: this project has no public/ directory. The
+# standard Next scaffold ships one, so the line looked harmless - but COPY
+# fails the build outright when the source path does not exist, and it did.
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json

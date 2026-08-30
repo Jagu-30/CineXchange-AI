@@ -26,6 +26,9 @@ for u in $(ls /home); do usermod -aG docker "$u" || true; done
 systemctl enable --now docker
 mkdir -p /opt/cinexchange
 chmod 0777 /opt/cinexchange
+# Owned by the login user, not root: tar sets metadata on the target
+# directory itself and 0777 alone is not enough for that.
+for u in $(ls /home); do chown -R "$u" /opt/cinexchange || true; done
 
 
 # 4 GB of swap. `next build` is the memory spike in this stack and an OOM there
