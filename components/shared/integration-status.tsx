@@ -16,6 +16,15 @@ import type { HealthResponse } from '@/lib/types';
 export interface IntegrationStatusProps {
   /** Poll interval in ms. Defaults to 15s; pass 0 to disable polling. */
   pollIntervalMs?: number;
+  /**
+   * Render as a single pill instead of the full per-agent panel.
+   *
+   * The panel is right for a dashboard section and wrong for a header slot: at
+   * full size it crowded out the logo and hero on the landing page. Compact
+   * shows the same real /healthz result - N of M agents reachable - in the
+   * space the old hardcoded "5 AGENTS ONLINE" badge used to occupy.
+   */
+  compact?: boolean;
   className?: string;
 }
 
@@ -24,7 +33,11 @@ type LoadState =
   | { kind: 'error'; message: string }
   | { kind: 'loaded'; health: HealthResponse };
 
-export function IntegrationStatus({ pollIntervalMs = 15000, className = '' }: IntegrationStatusProps) {
+export function IntegrationStatus({
+  pollIntervalMs = 15000,
+  compact = false,
+  className = '',
+}: IntegrationStatusProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -49,6 +62,48 @@ export function IntegrationStatus({ pollIntervalMs = 15000, className = '' }: In
     const interval = setInterval(fetchStatus, pollIntervalMs);
     return () => clearInterval(interval);
   }, [fetchStatus, pollIntervalMs]);
+
+  if (compact) {
+    const agents = state.kind === 'loaded' ? Object.entries(state.health.agents) : [];
+    const reachable = agents.filter(([, v]) => Array.isArray(v)).length;
+    const total = agents.length;
+    const allUp = total > 0 && reachable === total;
+
+    const tone =
+      state.kind === 'error' || (state.kind === 'loaded' && !allUp)
+        ? 'border-redx/30 text-redx'
+        : state.kind === 'loading'
+          ? 'border-ink-border text-ink-text-tertiary'
+          : 'border-greenx/30 text-greenx';
+
+    const label =
+      state.kind === 'loading'
+        ? 'CHECKING AGENTS'
+        : state.kind === 'error'
+          ? 'AGENTS UNREACHABLE'
+          : `${reachable}/${total} AGENTS REACHABLE`;
+
+    return (
+      <button
+        type="button"
+        onClick={fetchStatus}
+        title={
+          state.kind === 'error'
+            ? state.message
+            : agents.map(([n, v]) => `${n}: ${Array.isArray(v) ? 'reachable' : String(v)}`).join('\n')
+        }
+        className={`glass flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-1.5 transition hover:opacity-80 ${tone} ${className}`}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            allUp ? 'bg-greenx animate-pulse-dot' : state.kind === 'loading' ? 'bg-ink-text-tertiary' : 'bg-redx'
+          }`}
+        />
+        <span className="mono text-[10px] font-medium">{label}</span>
+        <RefreshCw className={`h-3 w-3 opacity-60 ${refreshing ? 'animate-spin' : ''}`} />
+      </button>
+    );
+  }
 
   return (
     <div className={`rounded-xl border border-ink-border bg-ink-surface-raised/60 p-3 backdrop-blur-md ${className}`}>

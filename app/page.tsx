@@ -146,9 +146,10 @@ function IntakeFormContent() {
           </div>
           {/* Was a hardcoded "5 AGENTS ONLINE" badge that was never backed by a
               check - it rendered green whether or not a single agent was up.
-              IntegrationStatus reports real per-agent MCP reachability from
-              GET /healthz. */}
-          <IntegrationStatus className="shrink-0" />
+              This reports real per-agent MCP reachability from GET /healthz.
+              Compact: the full panel belongs in a dashboard section, and at
+              header size it crowded out the logo and the hero. */}
+          <IntegrationStatus compact />
         </header>
 
         {/* Hero */}
