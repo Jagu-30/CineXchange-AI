@@ -25,7 +25,8 @@ import {
   type ReactNode,
 } from 'react';
 
-import { apiClient, StreamError } from './api-client';
+import { apiClient, NotFoundError, StreamError } from './api-client';
+import { latestStepPerNumber } from './types';
 import type {
   ApprovalDecision,
   ApprovalDecisionResponse,
@@ -38,6 +39,7 @@ import type {
   ProductionSummary,
   RecoveryRequest,
   RecoveryResponse,
+  StepRowLike,
   StepStreamEvent,
 } from './types';
 
@@ -56,6 +58,13 @@ export interface MissionContextValue {
   steps: StepStreamEvent[];
   /** The most recent event for each step number, ascending by step. */
   latestStepByNumber: StepStreamEvent[];
+  /**
+   * The pipeline as it should be rendered: the live stream when it has
+   * delivered anything, otherwise the `/status` snapshot collapsed to one row
+   * per step. Use this for step UI — `status.steps` raw holds two rows per step
+   * and reads as permanently "in progress".
+   */
+  pipelineSteps: StepRowLike[];
   streamState: StreamState;
   /** The status carried by the terminal `end` event, once it arrives. */
   terminalStatus: ProductionStatus | null;
@@ -82,6 +91,12 @@ export interface MissionContextValue {
   createProduction: (
     input: CreateProductionRequest,
   ) => Promise<CreateProductionResponse | null>;
+  /**
+   * Re-open the event stream for the current run. The stream is terminal at
+   * `awaiting_approval`, but the run is not: approving resumes the pipeline in
+   * a background task, so something has to re-attach to watch it finish.
+   */
+  resumeStream: () => void;
   refreshStatus: () => Promise<ProductionStatusResponse | null>;
   refreshDetail: () => Promise<ProductionDetail | null>;
   refreshProductions: (limit?: number) => Promise<ProductionSummary[]>;
@@ -95,6 +110,9 @@ export interface MissionContextValue {
 const MissionContext = createContext<MissionContextValue | null>(null);
 
 const STORAGE_KEY = 'cinex.productionId';
+
+/** How often to re-read `/status` while the event stream is not carrying it. */
+const STATUS_POLL_MS = 10_000;
 
 function readStoredProductionId(): string | null {
   if (typeof window === 'undefined') return null;
@@ -134,6 +152,8 @@ export function MissionProvider({ children }: { children: ReactNode }) {
   const [productions, setProductions] = useState<ProductionSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  /** Bumped to re-open a stream that already ended. See `resumeStream`. */
+  const [streamEpoch, setStreamEpoch] = useState(0);
 
   // Reading localStorage during render would desync server and client HTML, so
   // the restore happens after mount instead.
@@ -152,6 +172,11 @@ export function MissionProvider({ children }: { children: ReactNode }) {
   const selectProduction = useCallback((next: string | null) => {
     setProductionId((current) => (current === next ? current : next));
     writeStoredProductionId(next);
+  }, []);
+
+  const resumeStream = useCallback(() => {
+    if (!productionIdRef.current) return;
+    setStreamEpoch((n) => n + 1);
   }, []);
 
   const fetchStatus = useCallback(async (id: string) => {
@@ -230,6 +255,11 @@ export function MissionProvider({ children }: { children: ReactNode }) {
         // An approval resumes the pipeline (happy path) or settles a recovery;
         // either way the cached snapshot is now stale.
         await refreshStatus();
+        // …and the work that follows the decision runs *after* the response:
+        // `decide` schedules resume_after_approval as a background task, and
+        // _settle_recovery finishes over MCP. The refresh above always wins that
+        // race, so re-attach to the stream instead of freezing on step 9.
+        resumeStream();
         return res;
       } catch (err) {
         setError(err as Error);
@@ -238,7 +268,7 @@ export function MissionProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       }
     },
-    [refreshStatus],
+    [refreshStatus, resumeStream],
   );
 
   const triggerRecovery = useCallback(
@@ -264,8 +294,15 @@ export function MissionProvider({ children }: { children: ReactNode }) {
   // One EventSource per production. The cleanup runs on unmount and on every id
   // change, so a component that unmounts mid-run cannot leak the connection —
   // and React 18 StrictMode's mount/unmount/mount is handled by the same path.
+  //
+  // `streamEpoch` lets `resumeStream` re-open a stream that already ended
+  // without discarding what is on screen: the reset below is keyed on the id
+  // actually changing, and the server replays from seq 0 anyway, so `mergeStep`
+  // re-seats the same rows.
+  const streamedIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!productionId) {
+      streamedIdRef.current = null;
       setSteps([]);
       setStatus(null);
       setDetail(null);
@@ -278,10 +315,13 @@ export function MissionProvider({ children }: { children: ReactNode }) {
     const id = productionId;
     let cancelled = false;
 
-    setSteps([]);
-    setStatus(null);
-    setDetail(null);
-    setTerminalStatus(null);
+    if (streamedIdRef.current !== id) {
+      streamedIdRef.current = id;
+      setSteps([]);
+      setStatus(null);
+      setDetail(null);
+      setTerminalStatus(null);
+    }
     setStreamError(null);
     setStreamState('connecting');
 
@@ -289,7 +329,16 @@ export function MissionProvider({ children }: { children: ReactNode }) {
     // so take one snapshot up front. A run that finished before this page loaded
     // still gets its full step history: the server replays from seq 0 on connect.
     void fetchStatus(id).catch((err) => {
-      if (!cancelled) setError(err as Error);
+      if (cancelled) return;
+      if (err instanceof NotFoundError) {
+        // A restored id this backend does not have — a reset database, or an id
+        // carried over from another environment. Keeping it non-null hides the
+        // production picker and leaves every page loading forever, so drop it
+        // (this also clears it from localStorage) and fall back to the picker.
+        selectProduction(null);
+        return;
+      }
+      setError(err as Error);
     });
 
     const unsubscribe = apiClient.subscribeToEvents(id, {
@@ -321,7 +370,46 @@ export function MissionProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unsubscribe();
     };
-  }, [productionId, fetchStatus]);
+  }, [productionId, streamEpoch, fetchStatus, selectProduction]);
+
+  // `awaiting_approval` ends the stream but not the run; only these two mean
+  // there is genuinely nothing left to watch.
+  const runStatus = status?.status ?? terminalStatus;
+  const runIsOver = runStatus === 'booked' || runStatus === 'failed';
+
+  // Poll `/status` whenever the stream is not carrying the run. Two cases:
+  //
+  //  * SSE never gets through — a proxy that buffers or strips
+  //    `text/event-stream`, or a cross-origin failure on the events route (the
+  //    deployed setup is cross-origin). EventSource retries silently forever, so
+  //    without this the snapshot is frozen at the single start-up fetch: the
+  //    processing screen shows ten PENDING steps for the whole run and never
+  //    redirects.
+  //  * The stream ended at the approval gate. The pipeline resumes in a
+  //    background task scheduled after the decide response, so the one refresh
+  //    fired at decision time always loses that race.
+  useEffect(() => {
+    if (!productionId) return;
+    if (streamState === 'open') return;
+    if (streamState === 'ended' && runIsOver) return;
+    const id = productionId;
+    const timer = window.setInterval(() => {
+      void fetchStatus(id).catch(() => undefined);
+    }, STATUS_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [productionId, streamState, runIsOver, fetchStatus]);
+
+  // …and re-attach the stream once the poll shows the run moving again. The
+  // server ends the stream while the status is still `awaiting_approval`, so a
+  // re-subscribe fired at decision time can hang up immediately; this catches
+  // the run as soon as it has actually left the gate, and cannot loop, because
+  // the server only ends a stream on a terminal status.
+  useEffect(() => {
+    if (!productionId) return;
+    if (streamState !== 'ended') return;
+    if (!runStatus || runIsOver || runStatus === 'awaiting_approval') return;
+    resumeStream();
+  }, [productionId, streamState, runStatus, runIsOver, resumeStream]);
 
   const latestStepByNumber = useMemo(() => {
     const latest = new Map<number, StepStreamEvent>();
@@ -329,12 +417,24 @@ export function MissionProvider({ children }: { children: ReactNode }) {
     return Array.from(latest.values()).sort((a, b) => a.step - b.step);
   }, [steps]);
 
+  // The stream is authoritative once it has delivered anything; until then (and
+  // permanently, if SSE is blocked) the `/status` snapshot stands in — but only
+  // after collapsing its two-rows-per-step audit list to the latest row each.
+  const pipelineSteps = useMemo<StepRowLike[]>(
+    () =>
+      latestStepByNumber.length > 0
+        ? latestStepByNumber
+        : latestStepPerNumber(status?.steps ?? []),
+    [latestStepByNumber, status],
+  );
+
   const value = useMemo<MissionContextValue>(
     () => ({
       productionId,
       selectProduction,
       steps,
       latestStepByNumber,
+      pipelineSteps,
       streamState,
       terminalStatus,
       streamError,
@@ -342,11 +442,12 @@ export function MissionProvider({ children }: { children: ReactNode }) {
       detail,
       productions,
       pendingApprovalId: status?.pending_approval_id ?? null,
-      productionStatus: status?.status ?? terminalStatus,
+      productionStatus: runStatus,
       isLoading,
       error,
       clearError,
       createProduction,
+      resumeStream,
       refreshStatus,
       refreshDetail,
       refreshProductions,
@@ -358,16 +459,19 @@ export function MissionProvider({ children }: { children: ReactNode }) {
       selectProduction,
       steps,
       latestStepByNumber,
+      pipelineSteps,
       streamState,
       terminalStatus,
       streamError,
       status,
       detail,
       productions,
+      runStatus,
       isLoading,
       error,
       clearError,
       createProduction,
+      resumeStream,
       refreshStatus,
       refreshDetail,
       refreshProductions,
@@ -420,6 +524,22 @@ export function formatINR(value: Money | number | null | undefined): string {
   const n = parseMoney(value);
   if (n === null) return '—';
   return '₹' + Math.round(n).toLocaleString('en-IN');
+}
+
+/**
+ * Money that carries a direction: `+₹12,000` over, `-₹4,50,000` under, `₹0` flat.
+ *
+ * A cost delta is `total_cost - baseline` and is genuinely negative whenever the
+ * gate opened on a compliance failure under budget, or a replacement vendor came
+ * in cheaper. Prefixing a hardcoded `+` renders a saving as an overrun at the one
+ * screen where the producer commits money, so the sign comes from the value.
+ */
+export function formatSignedINR(value: Money | number | null | undefined): string {
+  const n = parseMoney(value);
+  if (n === null) return '—';
+  const rounded = Math.round(n);
+  if (rounded === 0) return formatINR(0);
+  return (rounded > 0 ? '+' : '-') + formatINR(Math.abs(rounded));
 }
 
 export function formatINRLakh(value: Money | number | null | undefined): string {

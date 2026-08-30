@@ -6,7 +6,7 @@ import {
   Clapperboard,
   LayoutDashboard,
   Sparkles,
-  Workflow,
+  PackageCheck,
   Siren,
   Brain,
   Search,
@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatINR, useMission } from '@/lib/mission-context';
-import { DemoBadge } from './demo-badge';
 
 const MAIN_NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, desc: 'Mission control overview' },
@@ -38,9 +37,13 @@ const PLANNER_SUBNAV = [
   { href: '/ai-planner/audit', label: 'Agent Audit Log', icon: FileText },
 ];
 
+// Both of these used to describe something else: /booking was a pipeline guide
+// whose content has been deleted, and /demo replayed a script. /demo now fires a
+// real POST /productions/{id}/recovery, which supersedes a confirmed booking and
+// cannot be undone - labelling that a 'simulation' invites an irreversible click.
 const SECONDARY_NAV = [
-  { href: '/booking', label: 'Pipeline Architecture', icon: Workflow, desc: '10-step agent pipeline guide' },
-  { href: '/demo', label: 'Simulated Recovery', icon: Siren, desc: 'Interactive failure simulation' },
+  { href: '/booking', label: 'Bookings Confirmed', icon: PackageCheck, desc: 'Live record of what step 10 booked' },
+  { href: '/demo', label: 'Live Recovery Trigger', icon: Siren, desc: 'Runs a real recovery - not reversible' },
 ];
 
 export function Sidebar() {
@@ -198,8 +201,7 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="border-t border-ink-border px-5 py-4 bg-ink-surface/50">
-        <DemoBadge />
-        <div className="mono mt-2 text-[9px] text-ink-text-tertiary">
+        <div className="mono text-[9px] text-ink-text-tertiary">
           <span>v1.0.0</span>
         </div>
       </div>

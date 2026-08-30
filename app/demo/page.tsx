@@ -7,6 +7,7 @@ import { apiClient, isApiError, isConflictError, isAgentUnavailableError } from 
 import { AppShell } from '@/components/shared/app-shell';
 import { AgentActivityTimeline } from '@/components/shared/agent-activity-timeline';
 import { ApprovalCard } from '@/components/shared/approval-card';
+import { isRecoveryApproval } from '@/lib/types';
 import type { TraceEntry } from '@/lib/types';
 import { Siren, Play, RefreshCw, Activity, AlertTriangle, HelpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -53,9 +54,21 @@ function DemoContent() {
     loadTrace();
   }, [loadTrace]);
 
+  // The provider only opens the stream and takes a `/status` snapshot, so
+  // without this `detail` is null on arrival and the approval lookup below can
+  // never find anything until the user triggers a recovery from this page.
+  useEffect(() => {
+    if (productionId) void refreshDetail();
+  }, [productionId, refreshDetail]);
+
+  // `kind` is written only from the post-decision audit row, so it is null for
+  // the whole time an approval is pending — the only time this card matters.
+  // `isRecoveryApproval` falls back to the `recovery:` reason prefix, which is
+  // how the orchestrator itself classifies the gate.
   const recoveryApproval =
     pendingApprovalId != null
-      ? detail?.approvals.find((a) => a.approval_id === pendingApprovalId && a.kind === 'recovery') ?? null
+      ? detail?.approvals.find((a) => a.approval_id === pendingApprovalId && isRecoveryApproval(a)) ??
+        null
       : null;
 
   const handleTrigger = async () => {

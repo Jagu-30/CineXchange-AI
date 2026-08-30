@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useMission, formatINR } from '@/lib/mission-context';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
-import { DemoBadge } from '@/components/shared/demo-badge';
 import type { ProductionRequirement, VendorOffer } from '@/lib/types';
 import {
   Search,
@@ -229,8 +228,7 @@ function MarketplacePageContent() {
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
-            <DemoBadge />
-            <span className="mono text-[10px] text-ink-text-tertiary">· Steps 3–5: discover / solicit / shortlist (read-only)</span>
+            <span className="mono text-[10px] text-ink-text-tertiary">Steps 3–5: discover / solicit / shortlist (read-only)</span>
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary flex items-center gap-2.5">
             <Search className="h-6 w-6 text-bluex" />

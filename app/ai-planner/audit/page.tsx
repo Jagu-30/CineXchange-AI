@@ -5,7 +5,6 @@ import { useMission } from '@/lib/mission-context';
 import { apiClient, isApiError } from '@/lib/api-client';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
-import { DemoBadge } from '@/components/shared/demo-badge';
 import { AgentActivityTimeline } from '@/components/shared/agent-activity-timeline';
 import type { PipelineStepName, StepStatus, StepStreamEvent, TraceEntry, TraceResponse } from '@/lib/types';
 import { PIPELINE_STEP_NAMES } from '@/lib/types';
@@ -99,8 +98,7 @@ function AuditPageContent() {
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
-            <DemoBadge />
-            <span className="mono text-[10px] text-ink-text-tertiary">· Audit Trail</span>
+            <span className="mono text-[10px] text-ink-text-tertiary">Audit Trail</span>
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary flex items-center gap-2.5">
             <FileText className="h-6 w-6 text-amberx" />

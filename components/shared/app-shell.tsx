@@ -9,7 +9,7 @@ import {
   Clapperboard,
   LayoutDashboard,
   Sparkles,
-  Workflow,
+  PackageCheck,
   Siren,
   Brain,
   Search,
@@ -20,7 +20,6 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sidebar } from './sidebar';
-import { DemoBadge } from './demo-badge';
 
 const MOBILE_NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,8 +31,8 @@ const MOBILE_NAV = [
   { href: '/ai-planner/booking', label: 'Booking Record', icon: CheckCircle2 },
   { href: '/ai-planner/recovery', label: 'Emergency Recovery', icon: Siren },
   { href: '/ai-planner/audit', label: 'Agent Audit Log', icon: FileText },
-  { href: '/booking', label: 'Pipeline Architecture', icon: Workflow },
-  { href: '/demo', label: 'Recovery Simulation', icon: Siren },
+  { href: '/booking', label: 'Bookings Confirmed', icon: PackageCheck },
+  { href: '/demo', label: 'Live Recovery Trigger', icon: Siren },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -83,9 +82,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                 );
               })}
             </nav>
-            <div className="p-4 border-t border-ink-border">
-              <DemoBadge />
-            </div>
           </div>
         </div>
       )}
@@ -103,9 +99,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Clapperboard className="h-4 w-4 text-amberx" />
             <span className="text-sm font-semibold">CineXchange AI</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-greenx animate-pulse-dot" />
-          </div>
+          {/* No status indicator here: nothing in this shell checks whether the
+              backend is reachable, and a hardcoded green dot asserted health it
+              never verified. IntegrationStatus polls /healthz where it matters. */}
+          <div className="w-5" />
         </div>
         <div className="flex-1 overflow-y-auto">{children}</div>
       </div>

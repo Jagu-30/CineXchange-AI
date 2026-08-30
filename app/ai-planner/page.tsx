@@ -7,7 +7,6 @@ import type { StreamState } from '@/lib/mission-context';
 import { apiClient } from '@/lib/api-client';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
-import { DemoBadge } from '@/components/shared/demo-badge';
 import { AgentActivityTimeline } from '@/components/shared/agent-activity-timeline';
 import { ApprovalCard } from '@/components/shared/approval-card';
 import { IntegrationStatus } from '@/components/shared/integration-status';
@@ -15,7 +14,6 @@ import {
   PIPELINE_STEP_NAMES,
   type PipelineStepName,
   type StepStatus,
-  type JsonObject,
   type TraceEntry,
   type RecoveryResponse,
 } from '@/lib/types';
@@ -39,17 +37,6 @@ import {
   History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-// A minimal structural shape both StepStreamEvent (from the SSE stream) and
-// StatusStep (from the /status snapshot) satisfy, so the row renderer below
-// does not care which source produced a given step.
-interface StepLike {
-  step: number;
-  name: PipelineStepName;
-  status: StepStatus;
-  detail: JsonObject;
-  ts: string;
-}
 
 const STEP_ICON: Record<PipelineStepName, any> = {
   ingest: Upload,
@@ -116,6 +103,7 @@ function PlannerHubContent() {
     productionId,
     selectProduction,
     latestStepByNumber,
+    pipelineSteps,
     streamState,
     streamError,
     status,
@@ -231,7 +219,11 @@ function PlannerHubContent() {
     await Promise.all([refreshStatus(), refreshDetail(), refreshProductions()]);
   };
 
-  const stepsSource: StepLike[] = latestStepByNumber.length > 0 ? latestStepByNumber : status?.steps ?? [];
+  // The live stream when it has anything, otherwise the /status snapshot with
+  // its two-rows-per-step audit list already collapsed to the latest row each —
+  // a raw `.find()` over status.steps always returns the `in_progress` row and
+  // renders a finished pipeline as ten steps still running.
+  const stepsSource = pipelineSteps;
   const pendingApproval = detail?.approvals.find((a) => a.approval_id === pendingApprovalId) ?? null;
 
   return (
@@ -240,9 +232,8 @@ function PlannerHubContent() {
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
-            <DemoBadge />
             {productionStatus && (
-              <span className="mono text-[10px] text-ink-text-tertiary">· Status: {productionStatus}</span>
+              <span className="mono text-[10px] text-ink-text-tertiary">Status: {productionStatus}</span>
             )}
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary">

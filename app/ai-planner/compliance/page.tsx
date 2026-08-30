@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useMission, formatINR } from '@/lib/mission-context';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
-import { DemoBadge } from '@/components/shared/demo-badge';
 import { ApprovalCard } from '@/components/shared/approval-card';
+import { isRecoveryApproval } from '@/lib/types';
 import type { ApprovalDecisionResponse, ComplianceCheck, JsonObject, ProductionApproval } from '@/lib/types';
 import {
   ShieldCheck,
@@ -20,27 +20,23 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/** `kind` is only ever populated from the audit payload — a null kind falls back
- * to the `recovery:`-prefixed reason string the backend always writes for a
- * recovery gate. See ProductionApproval.kind / .reason in lib/types.ts. */
-function isRecoveryApproval(a: ProductionApproval): boolean {
-  if (a.kind) return a.kind === 'recovery';
-  return a.reason?.startsWith('recovery:') ?? false;
-}
-
 function evidenceEntries(evidence: JsonObject): [string, unknown][] {
   return Object.entries(evidence || {}).filter(([k]) => k !== 'disclaimer');
 }
 
 function CompliancePageContent() {
   const router = useRouter();
-  const { productionId, status, detail, pendingApprovalId, refreshDetail, isLoading } = useMission();
+  const { productionId, status, detail, pendingApprovalId, productionStatus, refreshDetail, isLoading } =
+    useMission();
 
   const [selectedCheck, setSelectedCheck] = useState<ComplianceCheck | null>(null);
 
+  // Also re-read the record whenever the run's status moves: the producer
+  // approves on this page and the pipeline then books in a background task, so
+  // the copy fetched on arrival is stale exactly when it matters.
   useEffect(() => {
     if (productionId) void refreshDetail();
-  }, [productionId, refreshDetail]);
+  }, [productionId, productionStatus, refreshDetail]);
 
   const checks: ComplianceCheck[] = detail?.compliance?.checks ?? [];
   const overall = detail?.compliance?.overall ?? null;
@@ -55,7 +51,13 @@ function CompliancePageContent() {
     [...complianceApprovals].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ??
     null;
 
-  const isBooked = status?.status === 'booked';
+  // Read both sources, because either can be the fresh one: `detail` is fetched
+  // by this page's own effect, while `status` is the provider snapshot (now
+  // polled while a run is unfinished). Reading only the provider snapshot — which
+  // used to refresh on stream connect and stream end alone, and the stream ends
+  // at `awaiting_approval` — kept the only forward button on this page, the one a
+  // producer needs immediately after approving, from ever appearing.
+  const isBooked = detail?.production.status === 'booked' || status?.status === 'booked';
   const riskUnavailableReason = detail?.unavailable?.risk_assessment ?? null;
 
   const handleApprovalDecided = (_result: ApprovalDecisionResponse) => {
@@ -82,8 +84,7 @@ function CompliancePageContent() {
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
-            <DemoBadge />
-            <span className="mono text-[10px] text-ink-text-tertiary">· Compliance Agent</span>
+            <span className="mono text-[10px] text-ink-text-tertiary">Compliance Agent</span>
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary flex items-center gap-2.5">
             <ShieldCheck className="h-6 w-6 text-greenx" />

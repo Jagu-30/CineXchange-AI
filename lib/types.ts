@@ -147,6 +147,34 @@ export interface StatusStep {
   ts: IsoTimestamp;
 }
 
+/**
+ * The fields every step row carries, whether it arrived on the SSE stream
+ * (`StepStreamEvent`, which adds `seq`) or in a `/status` snapshot
+ * (`StatusStep`, which does not). Both satisfy this structurally.
+ */
+export interface StepRowLike {
+  step: number;
+  name: PipelineStepName;
+  status: StepStatus;
+  detail: JsonObject;
+  ts: IsoTimestamp;
+}
+
+/**
+ * Collapse an audit-ordered step list to the latest row per step number.
+ *
+ * `/status` returns EVERY step audit row (`cinex/steps.py` `read_steps`) in
+ * `seq` order, so each step appears at least twice — `in_progress`, then
+ * `done`. A plain `.find()` over that list always returns the `in_progress`
+ * row and reports a finished pipeline as still running. Last-wins per step
+ * number is the same rule the live stream reduction uses.
+ */
+export function latestStepPerNumber<T extends { step: number }>(rows: readonly T[]): T[] {
+  const latest = new Map<number, T>();
+  for (const row of rows) latest.set(row.step, row);
+  return Array.from(latest.values()).sort((a, b) => a.step - b.step);
+}
+
 export interface ProductionStatusResponse {
   production_id: Uuid;
   status: ProductionStatus;
@@ -335,8 +363,13 @@ export interface ComplianceSummary {
   checks: ComplianceCheck[];
 }
 
-/** `happy_path` gates the pipeline; `recovery` gates a replacement that already happened. */
-export type ApprovalGateKind = 'happy_path' | 'recovery';
+/**
+ * `happy_path` gates the pipeline; `recovery` gates a replacement that already
+ * happened; `recovery_orphaned` is a recovery-reason approval whose event row is
+ * missing, which the orchestrator audits and refuses to resume
+ * (`services/orchestrator/main.py` `decide`).
+ */
+export type ApprovalGateKind = 'happy_path' | 'recovery' | 'recovery_orphaned';
 
 export interface ProductionApproval {
   approval_id: Uuid;
@@ -357,6 +390,25 @@ export interface ProductionApproval {
   threshold_pct: number | null;
   /** Audit payload only. */
   kind: ApprovalGateKind | null;
+}
+
+/**
+ * Is this approval a recovery gate?
+ *
+ * `kind` is not a column: `services/orchestrator/aggregate.py` populates it
+ * only from the producer's post-decision audit row, so a *pending* approval
+ * always has `kind === null` — the state in which this question actually
+ * matters. The `recovery:` reason prefix is the backend's own second witness
+ * (`decide()` in `services/orchestrator/main.py` treats it as decisive), so
+ * fall back to it. `recovery_orphaned` counts as a recovery too: it is a
+ * recovery gate whose event row went missing, never a happy-path one.
+ *
+ * The single definition of this rule — the pages that each rolled their own
+ * diverged, and one of them could never match a pending gate at all.
+ */
+export function isRecoveryApproval(a: ProductionApproval): boolean {
+  if (a.kind) return a.kind.startsWith('recovery');
+  return a.reason?.startsWith('recovery:') ?? false;
 }
 
 export interface ProductionBooking {

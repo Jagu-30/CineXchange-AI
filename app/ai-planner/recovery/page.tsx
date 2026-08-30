@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import { useMission, formatINR, parseMoney } from '@/lib/mission-context';
+import { useEffect, useState } from 'react';
+import { useMission, formatSignedINR, parseMoney } from '@/lib/mission-context';
 import { apiClient, isAgentUnavailableError, isApiError, isConflictError } from '@/lib/api-client';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
-import { DemoBadge } from '@/components/shared/demo-badge';
 import { ApprovalCard } from '@/components/shared/approval-card';
+import { isRecoveryApproval } from '@/lib/types';
 import type {
   ApprovalDecisionResponse,
   JsonObject,
@@ -55,14 +55,6 @@ const EVENT_STATUS_THEME: Record<string, { text: string; bg: string; border: str
   failed: { text: 'text-redx', bg: 'bg-redx/10', border: 'border-redx/30' },
 };
 
-/** `kind` is only ever populated from the audit payload; fall back to the
- * `recovery:`-prefixed reason string the backend always writes for a recovery
- * gate. See ProductionApproval.kind / .reason in lib/types.ts. */
-function isRecoveryApproval(a: ProductionApproval): boolean {
-  if (a.kind) return a.kind === 'recovery';
-  return a.reason?.startsWith('recovery:') ?? false;
-}
-
 function asObj(v: unknown): JsonObject | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as JsonObject) : null;
 }
@@ -70,8 +62,7 @@ function asObj(v: unknown): JsonObject | null {
 function formatSigned(value: unknown): string {
   const n = parseMoney(typeof value === 'string' || typeof value === 'number' ? value : null);
   if (n === null) return String(value);
-  const sign = n > 0 ? '+' : '';
-  return sign + formatINR(n);
+  return formatSignedINR(n);
 }
 
 function formatDetailValue(key: string, value: unknown): string {
@@ -147,11 +138,19 @@ function DetailFields({ detail }: { detail: JsonObject }) {
 }
 
 function RecoveryPageContent() {
-  const { productionId, status, detail, pendingApprovalId, refreshStatus, refreshDetail, isLoading } =
+  const { productionId, detail, pendingApprovalId, refreshStatus, refreshDetail, isLoading } =
     useMission();
 
   const [triggering, setTriggering] = useState(false);
   const [triggerNote, setTriggerNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+
+  // The provider never fetches `detail` on its own — it only opens the stream
+  // and takes a `/status` snapshot. Without this, arriving here directly (or
+  // reloading on it) shows "No recovery has run yet" for a production that has
+  // real recovery events. Same effect every sibling page has.
+  useEffect(() => {
+    if (productionId) void refreshDetail();
+  }, [productionId, refreshDetail]);
 
   const events: ProductionRecoveryEvent[] = detail?.recovery_events ?? [];
   const latestEvent =
@@ -233,8 +232,7 @@ function RecoveryPageContent() {
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
-            <DemoBadge />
-            <span className="mono text-[10px] text-redx font-semibold">· Emergency Recovery</span>
+            <span className="mono text-[10px] text-redx font-semibold">Emergency Recovery</span>
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary flex items-center gap-2.5">
             <Siren className="h-6 w-6 text-redx" />

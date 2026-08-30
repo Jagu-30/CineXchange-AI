@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMission } from '@/lib/mission-context';
 import { PIPELINE_STEP_NAMES, TERMINAL_PRODUCTION_STATUSES } from '@/lib/types';
-import type { PipelineStepName, StepStreamEvent } from '@/lib/types';
+import type { PipelineStepName, StepRowLike } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {
   FileText,
@@ -44,8 +44,8 @@ const STEP_META: Record<PipelineStepName, { title: string; description: string; 
   book: { title: 'Book', description: 'Confirms bookings with winning vendors.', icon: PackageCheck },
 };
 
-function eventForStep(stepNumber: number, latestStepByNumber: StepStreamEvent[]): StepStreamEvent | undefined {
-  return latestStepByNumber.find((e) => e.step === stepNumber);
+function eventForStep(stepNumber: number, rows: StepRowLike[]): StepRowLike | undefined {
+  return rows.find((e) => e.step === stepNumber);
 }
 
 const STREAM_STATE_LABEL: Record<string, string> = {
@@ -58,7 +58,10 @@ const STREAM_STATE_LABEL: Record<string, string> = {
 
 function ProcessingContent() {
   const router = useRouter();
-  const { productionId, latestStepByNumber, streamState, streamError, productionStatus } = useMission();
+  // `pipelineSteps` is the live stream when it is flowing and the deduplicated
+  // /status snapshot when it is not — so a blocked EventSource shows the run's
+  // real progress instead of ten PENDING rows for its whole duration.
+  const { productionId, pipelineSteps, streamState, streamError, productionStatus } = useMission();
 
   // Route the moment the run reaches a terminal status — from the live stream's
   // `end` event, or from the status snapshot if the run had already finished
@@ -97,7 +100,7 @@ function ProcessingContent() {
     );
   }
 
-  const doneCount = latestStepByNumber.filter((s) => s.status === 'done').length;
+  const doneCount = pipelineSteps.filter((s) => s.status === 'done').length;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-ink-bg">
@@ -142,7 +145,7 @@ function ProcessingContent() {
           {PIPELINE_STEP_NAMES.map((name, idx) => {
             const stepNumber = idx + 1;
             const meta = STEP_META[name];
-            const event = eventForStep(stepNumber, latestStepByNumber);
+            const event = eventForStep(stepNumber, pipelineSteps);
             const status = event?.status ?? null;
             const isDone = status === 'done';
             const isFailed = status === 'failed';

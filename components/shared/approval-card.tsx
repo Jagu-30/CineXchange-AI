@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { formatINR, useMission } from '@/lib/mission-context';
+import { formatINR, formatSignedINR, parseMoney, useMission } from '@/lib/mission-context';
 import { apiClient, isAgentUnavailableError, isApiError, isConflictError } from '@/lib/api-client';
+import { isRecoveryApproval } from '@/lib/types';
 import type { ApprovalDecisionResponse, ProductionApproval } from '@/lib/types';
 import { AlertCircle, AlertTriangle, Check, Clock, Loader2, ShieldCheck, X } from 'lucide-react';
 
@@ -23,13 +24,23 @@ function formatTimestamp(iso: string): string {
 }
 
 export function ApprovalCard({ approval, onDecided, className = '' }: ApprovalCardProps) {
-  const { refreshStatus } = useMission();
+  const { refreshStatus, resumeStream } = useMission();
   const [deciding, setDeciding] = useState<'approved' | 'rejected' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  const isRecovery = approval.kind === 'recovery';
+  // `kind` is null while an approval is pending, which is exactly when this card
+  // renders the gate — so classify the same way the backend does.
+  const isRecovery = isRecoveryApproval(approval);
   const isPending = approval.producer_decision === 'pending';
+
+  // `delta_amount` is `total_cost - baseline`. It is negative when the gate
+  // opened on a compliance failure while under budget, or when a replacement
+  // vendor is cheaper than the one it supersedes. A saving is not an overrun and
+  // must not be shown as one.
+  const delta = parseMoney(approval.delta_amount);
+  const isSaving = delta != null && delta < 0;
+  const isOverrun = delta != null && delta > 0;
 
   const handleDecide = async (decision: 'approved' | 'rejected') => {
     setDeciding(decision);
@@ -38,6 +49,11 @@ export function ApprovalCard({ approval, onDecided, className = '' }: ApprovalCa
     try {
       const result = await apiClient.decideApproval(approval.approval_id, decision);
       await refreshStatus();
+      // The pipeline resumes (or the recovery settles) in work scheduled *after*
+      // this response, so the refresh above always loses that race. Re-open the
+      // stream — which ended at `awaiting_approval` and is never re-opened on its
+      // own — or the UI sits on step 9 until a manual reload.
+      resumeStream();
       onDecided?.(result);
     } catch (err) {
       if (isConflictError(err)) {
@@ -111,9 +127,20 @@ export function ApprovalCard({ approval, onDecided, className = '' }: ApprovalCa
             <h3 className="text-[15px] font-semibold text-ink-text-primary">
               {isRecovery ? 'Recovery approval required' : 'Approval required'}
             </h3>
-            <span className="mono rounded-full bg-redx/15 px-2.5 py-0.5 text-[10px] font-bold text-redx">
-              +{formatINR(approval.delta_amount)}
-              {approval.delta_pct != null && ` (${approval.delta_pct.toFixed(1)}%)`}
+            <span
+              className={cn(
+                'mono rounded-full px-2.5 py-0.5 text-[10px] font-bold',
+                isOverrun
+                  ? 'bg-redx/15 text-redx'
+                  : isSaving
+                    ? 'bg-greenx/15 text-greenx'
+                    : 'bg-ink-surface text-ink-text-secondary',
+              )}
+              title={isSaving ? 'Under the baseline — this gate is not a cost overrun' : undefined}
+            >
+              {delta == null ? formatINR(approval.delta_amount) : formatSignedINR(delta)}
+              {approval.delta_pct != null &&
+                ` (${approval.delta_pct > 0 ? '+' : ''}${approval.delta_pct.toFixed(1)}%)`}
             </span>
           </div>
           <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-text-secondary">{approval.reason}</p>
