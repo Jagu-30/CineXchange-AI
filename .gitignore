@@ -52,3 +52,4 @@ env/
 .env.bak.*
 .superpowers/
 .last_production_id
+typecheck_out.txt
