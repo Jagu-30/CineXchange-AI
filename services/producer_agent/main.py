@@ -14,6 +14,9 @@ from cinex.schemas.agents import CATEGORIES, Decomposition
 log = get_logger("producer-agent")
 mcp = FastMCP("producer-agent")
 AGENT = "producer-agent"
+# A real shoot brief decomposes into more than one line item. Fewer than this
+# means the model gave up early, not that the brief was trivial.
+MIN_REQUIREMENTS = 3
 
 
 async def _decompose(
@@ -22,6 +25,20 @@ async def _decompose(
 ) -> dict:
     prompt = prompts.build(text, budget_cap, location, start_date, end_date)
     result: Decomposition = await get_llm().generate_json(prompt, Decomposition)
+
+    # The model occasionally stops after a single line for a brief that plainly
+    # implies more - observed roughly one run in three before the prompt was
+    # rewritten to walk the categories explicitly, and finish_reason was STOP
+    # every time, so it is the model deciding it is done rather than truncation.
+    # One retry is cheap insurance against that tail landing during a live demo.
+    if len(result.requirements) < MIN_REQUIREMENTS:
+        log.warning(
+            "decomposition_under_generated",
+            extra={"production_id": production_id, "count": len(result.requirements)},
+        )
+        retry: Decomposition = await get_llm().generate_json(prompt, Decomposition)
+        if len(retry.requirements) > len(result.requirements):
+            result = retry
 
     invalid = [r.category for r in result.requirements if r.category not in CATEGORIES]
     if invalid:

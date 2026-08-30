@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     negotiation_max_rounds: int = 3
     vendor_timeout_s: float = 5.0
     llm_timeout_s: float = 30.0
+    # One run makes 22-37 Gemini calls, most of them concurrent. These bound
+    # the burst and the retry budget when the provider answers 429/503.
+    llm_max_concurrency: int = 4
+    llm_max_attempts: int = 4
     insurance_rider_threshold: Decimal = Decimal("50000")
 
     producer_agent_url: str = "http://producer-agent:8001/mcp"
