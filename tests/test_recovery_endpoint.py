@@ -249,3 +249,64 @@ async def test_a_second_recovery_can_be_triggered_once_the_first_resolves(
     assert again.status_code == 200, again.text
     assert again.json()["outcome"] != "already_in_progress", \
         "a resolved recovery must not lock the production out of the next one"
+
+
+async def test_orphaned_recovery_approval_never_resumes_the_happy_path(
+    client, auth, session, production, recovery_routing,
+):
+    """The recovery agent writes its `recovery:` Approval BEFORE moving the event
+    to awaiting_approval. A crash in that window leaves a pending recovery
+    approval with no event to find. Classifying on the event row alone would then
+    call it happy_path and re-run _book, double-booking the production."""
+    from cinex.db.models import Approval, AuditLog
+    from services.orchestrator import main
+
+    # An approval that says recovery, with NO recovery_events row at all.
+    approval = Approval(
+        production_id=production.id, requested_by_agent="recovery-agent",
+        reason="recovery:threshold_breached", threshold_breached=True,
+        delta_amount=Decimal("400.00"),
+    )
+    production.status = "awaiting_approval"
+    session.add(approval)
+    await session.commit()
+    await session.refresh(approval)
+
+    r = await client.post(f"/approvals/{approval.id}/decide", headers=auth,
+                          json={"decision": "approved"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "recovery_orphaned", (
+        "must not be classified happy_path - that is the double-booking bug"
+    )
+
+    main.resume_after_approval.assert_not_awaited()
+    assert recovery_routing == [], "nothing to settle: there is no event"
+
+    rows = (await session.execute(select(AuditLog))).scalars().all()
+    assert any(a.action == "recovery_approval_orphaned" for a in rows), \
+        "the orphaned state must be audited, not silently swallowed"
+
+
+async def test_a_genuine_happy_path_approval_still_resumes(
+    client, auth, session, production, recovery_routing,
+):
+    """Guard against over-correcting: an approval with no recovery reason and no
+    event is an ordinary budget gate and must still book."""
+    from cinex.db.models import Approval
+    from services.orchestrator import main
+
+    approval = Approval(
+        production_id=production.id, requested_by_agent="compliance-agent",
+        reason="threshold_breached", threshold_breached=True,
+        delta_amount=Decimal("400.00"),
+    )
+    production.status = "awaiting_approval"
+    session.add(approval)
+    await session.commit()
+    await session.refresh(approval)
+
+    r = await client.post(f"/approvals/{approval.id}/decide", headers=auth,
+                          json={"decision": "approved"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "happy_path"
+    main.resume_after_approval.assert_awaited_once()

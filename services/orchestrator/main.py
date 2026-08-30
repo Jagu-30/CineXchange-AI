@@ -381,16 +381,43 @@ async def decide(
                    RecoveryEvent.status == "awaiting_approval")
             .order_by(RecoveryEvent.created_at.desc())
         )).scalars().first()
-        is_recovery = recovery_event is not None
 
-        await write_audit(session, actor="producer", action=f"approval_{body.decision}",
-                          entity_type="approval", entity_id=approval_id,
-                          payload={"production_id": str(production_id),
-                                   "kind": "recovery" if is_recovery else "happy_path",
-                                   "recovery_event_id": (
-                                       str(recovery_event.id) if is_recovery else None),
-                                   "reason_prefix_corroborates":
-                                       reason.startswith("recovery:")})
+        # The recovery agent writes the `recovery:` Approval row BEFORE it moves
+        # the event to `awaiting_approval`. A crash in that window leaves a
+        # pending recovery approval with no event to find - and treating the
+        # event row as the sole authority would then classify it `happy_path`
+        # and re-run _book, double-booking the production. The reason prefix is
+        # the second witness, so it decides rather than merely annotating.
+        reason_says_recovery = reason.startswith("recovery:")
+        is_recovery = recovery_event is not None or reason_says_recovery
+        orphaned = reason_says_recovery and recovery_event is None
+
+        await write_audit(
+            session,
+            actor="producer",
+            action=f"approval_{body.decision}",
+            entity_type="approval",
+            entity_id=approval_id,
+            payload={
+                "production_id": str(production_id),
+                "kind": ("recovery_orphaned" if orphaned
+                         else "recovery" if is_recovery else "happy_path"),
+                "recovery_event_id": (
+                    str(recovery_event.id) if recovery_event is not None else None),
+                "reason_prefix_corroborates": reason_says_recovery,
+            },
+        )
+
+        if orphaned:
+            # Nothing to settle and nothing safe to resume: the swap's own state
+            # is unknown. Record it loudly and stop rather than book anything.
+            await write_audit(
+                session, actor="orchestrator", action="recovery_approval_orphaned",
+                entity_type="approval", entity_id=approval_id,
+                payload={"production_id": str(production_id), "reason": reason,
+                         "detail": "recovery-reason approval with no awaiting_approval "
+                                   "event; refusing to resume the happy path"},
+            )
 
         if body.decision == "rejected" and not is_recovery:
             production = (await session.execute(
@@ -398,14 +425,17 @@ async def decide(
             )).scalar_one()
             production.status = "failed"
 
-    if is_recovery:
+    if orphaned:
+        pass  # audited above; settling and resuming are both unsafe here
+    elif is_recovery:
         await _settle_recovery(production_id, body.decision)
     elif body.decision == "approved":
         background.add_task(resume_after_approval, production_id)
 
     return {"approval_id": str(approval_id), "decision": body.decision,
             "production_id": str(production_id),
-            "kind": "recovery" if is_recovery else "happy_path"}
+            "kind": ("recovery_orphaned" if orphaned
+                     else "recovery" if is_recovery else "happy_path")}
 
 
 async def _settle_recovery(production_id: uuid.UUID, decision: str) -> None:

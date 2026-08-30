@@ -176,8 +176,29 @@ every row's `actor` is the process that actually made the decision.
 | Scout Agent | `offers` (insert) |
 | Negotiation Agent | `offers` (status, price, round, is_winner) |
 | Compliance Agent | `compliance_checks`, `approvals` |
-| Recovery Agent | `recovery_events` |
+| Recovery Agent | `recovery_events`, and during a recovery: `bookings` (supersede + replace), `offers.is_winner`, `compliance_checks` (re-check against the replacement), `productions.status`/`total_cost` |
 | **every service** | `audit_log` — append-only, no exceptions |
+
+**Correction, made after the first full review.** This table originally granted
+the Recovery Agent `recovery_events` alone, which contradicted §5.5 — steps 3
+through 5 of the recovery machine plainly require it to supersede a booking,
+create the replacement, recalculate the production total, and re-run the
+insurance and permit checks. The narrow reading was the error, not the code. The
+alternative — routing every one of those writes back through the orchestrator —
+would add four network hops inside a flow whose entire selling point is that it
+completes without human re-entry, and would buy nothing: the recovery agent is
+still the process that made the decision, which is the property `audit_log`
+attribution actually depends on.
+
+Two related notes:
+
+- The orchestrator updates `approvals.producer_decision` in
+  `POST /approvals/{id}/decide`. That is the **producer** acting through the API,
+  not an agent writing another agent's table, and the audit row is written with
+  `actor="producer"` accordingly.
+- `recovery_events` stays exclusively the Recovery Agent's. When the orchestrator
+  needs an event resolved after a producer decision it calls the agent's
+  `resolve_recovery` tool over MCP rather than writing the row itself.
 
 ---
 
