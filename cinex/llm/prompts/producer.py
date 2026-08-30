@@ -13,8 +13,11 @@ Break this into concrete, procurable requirements. Rules:
 - category MUST be exactly one of: {categories}
 - Infer what a real shoot needs even when the brief leaves it implicit. A night exterior
   implies lighting and a location permit; aerial shots imply a certified drone operator.
-- Set spec.requires_certification to true for any crew role legally requiring a licence
-  (drone operator, pyrotechnics, stunts, underwater).
+- For crew, set "role" to the specific role and set requires_certification to true for any
+  role legally requiring a licence (drone operator, pyrotechnics, stunts, underwater).
+  Leave "role" empty for non-crew categories.
+- Put every other specific (model, lens, capacity, dates, permit authority) into "details"
+  as {{"key": ..., "value": ...}} pairs.
 - priority 1 for anything the shoot cannot happen without, 3 for nice-to-have.
 - Do not invent a budget line for something the brief rules out.
 

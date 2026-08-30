@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from cinex.db.models import AuditLog, Requirement
-from cinex.schemas.agents import Decomposition, RequirementDraft
+from cinex.schemas.agents import Decomposition, RequirementDraft, SpecDetail
 
 pytestmark = pytest.mark.integration
 
@@ -16,10 +16,12 @@ def fake_llm(monkeypatch):
     from services.producer_agent import main
 
     result = Decomposition(requirements=[
-        RequirementDraft(category="camera", spec={"model": "Alexa Mini"}, quantity=2, priority=1),
-        RequirementDraft(category="crew", spec={"role": "drone operator",
-                                                "requires_certification": True}, quantity=1, priority=1),
-        RequirementDraft(category="permit", spec={"authority": "Lisbon CML"}, quantity=1, priority=2),
+        RequirementDraft(category="camera", details=[SpecDetail(key="model", value="Alexa Mini")],
+                         quantity=2, priority=1),
+        RequirementDraft(category="crew", role="drone operator", requires_certification=True,
+                         quantity=1, priority=1),
+        RequirementDraft(category="permit", details=[SpecDetail(key="authority", value="Lisbon CML")],
+                         quantity=1, priority=2),
     ])
     llm = AsyncMock()
     llm.generate_json = AsyncMock(return_value=result)
@@ -61,7 +63,7 @@ async def test_rejects_a_category_outside_the_allowed_set(session, production, m
     from services.producer_agent import main
     llm = AsyncMock()
     llm.generate_json = AsyncMock(return_value=Decomposition(requirements=[
-        RequirementDraft(category="catering", spec={}, quantity=1, priority=1),
+        RequirementDraft(category="catering", quantity=1, priority=1),
     ]))
     monkeypatch.setattr(main, "get_llm", lambda: llm)
 

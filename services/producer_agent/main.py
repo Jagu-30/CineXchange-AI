@@ -32,7 +32,7 @@ async def _decompose(
     async with session_scope() as session:
         for draft in result.requirements:
             row = Requirement(
-                production_id=pid, category=draft.category, spec=draft.spec,
+                production_id=pid, category=draft.category, spec=draft.to_spec(),
                 quantity=draft.quantity, priority=draft.priority,
             )
             session.add(row)
