@@ -1,112 +1,180 @@
 'use client';
 
-import { useMission } from '@/lib/mission-context';
+import { useEffect } from 'react';
+import Link from 'next/link';
+import { useMission, formatINR } from '@/lib/mission-context';
+import { isApiError } from '@/lib/api-client';
 import { AppShell } from '@/components/shared/app-shell';
-import { PROCUREMENT_STEPS } from '@/lib/mockData';
-import type { AgentId } from '@/lib/types';
 import {
-  Brain, Search, Handshake, ShieldCheck, Siren, Cpu, Check, type LucideIcon,
+  CheckCircle2,
+  ShieldCheck,
+  Package,
+  Loader2,
+  AlertCircle,
+  HelpCircle,
+  ArrowRight,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-const ICONS: Record<AgentId, LucideIcon> = {
-  producer: Brain, scout: Search, negotiation: Handshake, compliance: ShieldCheck, recovery: Siren, policy_engine: Cpu,
-};
+// This is where the processing page routes once a run's terminal status is
+// `booked` — the honest landing view of what the agents actually confirmed,
+// read live from GET /productions/{id}. It used to describe a fictional
+// 5-agent, 10-step pipeline that didn't match this backend's real step names
+// or its recovery model; that content is gone, not relocated.
 
-const AGENT_COLOR: Record<AgentId, string> = {
-  producer: 'text-amberx', scout: 'text-bluex', negotiation: 'text-amberx', compliance: 'text-greenx', recovery: 'text-redx', policy_engine: 'text-purple-400',
-};
+function BookingLandingContent() {
+  const { productionId, detail, isLoading, error, refreshDetail } = useMission();
 
-const AGENT_BG: Record<AgentId, string> = {
-  producer: 'bg-amberx/10', scout: 'bg-bluex/10', negotiation: 'bg-amberx/10', compliance: 'bg-greenx/10', recovery: 'bg-redx/10', policy_engine: 'bg-purple-500/10',
-};
+  useEffect(() => {
+    if (productionId) refreshDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productionId]);
 
+  const bookings = detail?.bookings ?? [];
+  const totalCommitted = bookings.reduce((sum, b) => {
+    const n = Number(b.final_price);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
 
-function BookingContent() {
-  const { scenario } = useMission();
+  const insuranceCheck = detail?.compliance.checks.find((c) => c.check_type === 'insurance') ?? null;
+
+  const errorMessage = error ? (isApiError(error) ? error.detail || error.message : error.message) : null;
 
   return (
-    <div className="px-6 lg:px-10 py-8 max-w-[1100px] mx-auto">
-      <header className="mb-8">
+    <div className="px-6 lg:px-10 py-8 max-w-[1100px] mx-auto space-y-8">
+      <header>
         <div className="flex items-center gap-2 mb-2">
-          <span className="mono text-[10px] uppercase tracking-[0.18em] text-amberx font-medium">
-            Procurement Workflow
+          <span className="mono text-[10px] uppercase tracking-[0.18em] text-greenx font-medium">
+            Procurement Complete
           </span>
         </div>
-        <h1 className="text-[26px] font-semibold tracking-tight text-ink-text-primary">
-          10-Step Procurement Pipeline
+        <h1 className="text-[26px] font-semibold tracking-tight text-ink-text-primary flex items-center gap-2.5">
+          <CheckCircle2 className="h-6 w-6 text-greenx" />
+          Bookings Confirmed
         </h1>
         <p className="mt-1.5 text-[13px] text-ink-text-secondary max-w-2xl">
-          How the 5 agents collaborate to take your shoot brief from request to delivered
-          procurement — with automatic recovery.
+          Every line below is a real booking row from step 10 (<span className="mono">book</span>) of this
+          production — nothing on this page is scripted.
         </p>
       </header>
 
-      {/* Agent legend */}
-      <div className="mb-8 flex flex-wrap gap-2.5">
-        {(Object.keys(ICONS) as AgentId[]).map((id) => {
-          const Icon = ICONS[id];
-          const name = PROCUREMENT_STEPS.find((s) => s.agent === id)?.agentName ?? id;
-          return (
-            <div key={id} className="glass card-hover flex items-center gap-2 rounded-full px-3.5 py-1.5 hover:border-ink-border-strong">
-              <Icon className={`h-3.5 w-3.5 ${AGENT_COLOR[id]}`} />
-              <span className="text-[11px] font-medium text-ink-text-secondary">{name}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Steps */}
-      <div className="relative">
-        <div className="absolute left-[23px] top-5 bottom-5 w-px bg-gradient-to-b from-ink-border via-ink-border to-transparent" />
-        <div className="space-y-4">
-          {PROCUREMENT_STEPS.map((step, i) => {
-            const Icon = ICONS[step.agent];
-            const isLast = i === PROCUREMENT_STEPS.length - 1;
-            return (
-              <div key={step.step} className="relative flex gap-5 animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
-                <div className="relative z-10 flex flex-col items-center">
-                  <div className={`flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink-bg ${AGENT_BG[step.agent]} shadow-lg`}>
-                    <Icon className={`h-5 w-5 ${AGENT_COLOR[step.agent]}`} />
-                  </div>
-                  {!isLast && <div className="mono mt-1.5 text-[9px] text-ink-text-tertiary">{String(step.step).padStart(2, '0')}</div>}
-                </div>
-                <div className="flex-1 pb-2">
-                  <div className="glass card-hover rounded-xl p-5 hover:border-ink-border-strong">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="mono flex h-7 w-7 items-center justify-center rounded-lg bg-ink-surface text-[12px] font-bold text-ink-text-primary">
-                          {step.step}
-                        </span>
-                        <h3 className="text-[14px] font-semibold text-ink-text-primary">{step.title}</h3>
-                      </div>
-                      <span className={`mono text-[10px] font-medium ${AGENT_COLOR[step.agent]}`}>{step.agentName}</span>
-                    </div>
-                    <p className="mt-2.5 text-[12px] leading-relaxed text-ink-text-secondary">{step.description}</p>
-                  </div>
-                </div>
+      {!productionId ? (
+        <div className="glass rounded-2xl border-dashed border-ink-border p-10 text-center">
+          <HelpCircle className="h-8 w-8 text-ink-text-tertiary mx-auto mb-3 opacity-60" />
+          <p className="text-[13px] text-ink-text-secondary">No production selected yet.</p>
+          <Link
+            href="/"
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amberx px-4 py-2 text-[13px] font-semibold text-ink-bg hover:bg-amberx/90 transition-all"
+          >
+            Start a production
+          </Link>
+        </div>
+      ) : isLoading && !detail ? (
+        <div className="glass rounded-2xl p-10 text-center">
+          <Loader2 className="h-6 w-6 text-amberx animate-spin-slow mx-auto mb-3" />
+          <p className="text-[13px] text-ink-text-secondary">Loading production record…</p>
+        </div>
+      ) : errorMessage ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-redx/30 bg-redx/10 p-4 text-[13px] text-redx">
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>{errorMessage}</span>
+        </div>
+      ) : (
+        <>
+          <div
+            className={cn(
+              'glass-strong rounded-2xl p-6 border flex flex-col md:flex-row items-start md:items-center justify-between gap-4',
+              bookings.length > 0 ? 'border-greenx/30 glow-green' : 'border-ink-border',
+            )}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className={cn(
+                  'flex h-12 w-12 items-center justify-center rounded-xl',
+                  bookings.length > 0 ? 'bg-greenx/15 text-greenx' : 'bg-ink-raised text-ink-text-tertiary',
+                )}
+              >
+                <CheckCircle2 className="h-6 w-6" />
               </div>
-            );
-          })}
-        </div>
-      </div>
+              <div>
+                <h2 className="text-[16px] font-bold text-ink-text-primary">
+                  {bookings.length} booking{bookings.length === 1 ? '' : 's'} committed
+                </h2>
+                {detail && (
+                  <div className="text-[12px] text-ink-text-secondary mt-0.5">
+                    {detail.production.location} · {detail.production.start_date} – {detail.production.end_date}
+                  </div>
+                )}
+                {insuranceCheck && (
+                  <div className="mono mt-1.5 inline-flex items-center gap-1.5 text-[10.5px] text-ink-text-secondary">
+                    <ShieldCheck className={cn('h-3.5 w-3.5', insuranceCheck.status === 'pass' ? 'text-greenx' : 'text-amberx')} />
+                    Insurance check: {insuranceCheck.status}
+                  </div>
+                )}
+              </div>
+            </div>
 
-      {/* Footer note */}
-      <div className="mt-10 glass rounded-xl p-6">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-greenx/15">
-            <Check className="h-4 w-4 text-greenx" />
+            <div className="mono text-right">
+              <div className="text-[10.5px] uppercase text-ink-text-tertiary">Total Committed Spend</div>
+              <div className="text-[24px] font-bold text-amberx">{formatINR(totalCommitted)}</div>
+            </div>
           </div>
-          <span className="text-[13px] font-semibold text-ink-text-primary">
-            End-to-end autonomous procurement
-          </span>
-        </div>
-        <p className="mt-2.5 text-[12px] leading-relaxed text-ink-text-secondary max-w-2xl">
-          From the moment a producer submits a shoot brief, the pipeline runs without manual
-          intervention — except where producer approval is required. The Emergency Recovery
-          Agent stays on standby throughout the shoot, ready to re-source and re-negotiate if
-          anything fails on-site.
-        </p>
-      </div>
+
+          <div className="glass-strong rounded-2xl p-7 border border-ink-border space-y-4">
+            <h3 className="text-[15px] font-semibold text-ink-text-primary flex items-center gap-2">
+              <Package className="h-4.5 w-4.5 text-amberx" />
+              Committed Line Items
+            </h3>
+
+            {bookings.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-ink-border p-8 text-center">
+                <p className="text-[12.5px] text-ink-text-tertiary">
+                  No bookings recorded for this production yet.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-ink-border/50">
+                {bookings.map((b) => (
+                  <div key={b.booking_id} className="py-4.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="mono text-[10px] text-ink-text-tertiary">{b.booking_id.slice(0, 8)}</span>
+                        <span
+                          className={cn(
+                            'mono text-[10px] font-bold px-2 py-0.5 rounded-full uppercase',
+                            b.status === 'confirmed' ? 'bg-greenx/15 text-greenx' : 'bg-ink-surface text-ink-text-tertiary',
+                          )}
+                        >
+                          {b.status}
+                        </span>
+                        {b.vendor_category && (
+                          <span className="mono text-[10px] text-ink-text-tertiary">{b.vendor_category}</span>
+                        )}
+                      </div>
+                      <div className="text-[14px] font-semibold text-ink-text-primary mt-1">
+                        {b.vendor_name ?? 'Unnamed vendor'}
+                      </div>
+                      <div className="text-[12px] text-ink-text-secondary mt-0.5">
+                        {b.booked_at ? `Booked: ${b.booked_at}` : 'Booked date not recorded'}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="mono text-[16px] font-bold text-ink-text-primary">{formatINR(b.final_price)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Link
+            href="/ai-planner/booking"
+            className="inline-flex items-center gap-2 text-[12.5px] font-medium text-amberx hover:text-amberx/80 transition-colors"
+          >
+            View the full booking record <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </>
+      )}
     </div>
   );
 }
@@ -114,7 +182,7 @@ function BookingContent() {
 export default function BookingPage() {
   return (
     <AppShell>
-      <BookingContent />
+      <BookingLandingContent />
     </AppShell>
   );
 }

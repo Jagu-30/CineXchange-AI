@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMission, formatINR, formatINRLakh } from '@/lib/mission-context';
+import { useMission, formatINRLakh } from '@/lib/mission-context';
+import { isApiError } from '@/lib/api-client';
+import { IntegrationStatus } from '@/components/shared/integration-status';
 import { SCENARIO } from '@/lib/mockData';
 import {
   Clapperboard,
@@ -17,6 +19,7 @@ import {
   Siren,
   MapPin,
   Flame,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -52,15 +55,31 @@ const PRESETS = [
   },
 ];
 
+/** Default start date: tomorrow, computed at render time — not a fabricated value. */
+function defaultStartDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** `start_date + days` in `YYYY-MM-DD`, computed locally since the backend wants both dates. */
+function addDaysIso(startIso: string, days: number): string {
+  const [y, m, d] = startIso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  dt.setUTCDate(dt.getUTCDate() + Math.max(0, days - 1));
+  return dt.toISOString().slice(0, 10);
+}
+
 function IntakeFormContent() {
   const router = useRouter();
-  const { planProject } = useMission();
+  const { createProduction, isLoading, error, clearError } = useMission();
 
   const [description, setDescription] = useState(SCENARIO.description);
   const [budget, setBudget] = useState(SCENARIO.budgetCap);
   const [days, setDays] = useState(SCENARIO.shootDays);
   const [location, setLocation] = useState('Western Ghats rainforest (Agumbe)');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [startDate, setStartDate] = useState(defaultStartDate());
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
 
   const applyPreset = (preset: typeof PRESETS[0]) => {
     setDescription(preset.prompt);
@@ -71,15 +90,35 @@ function IntakeFormContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    await planProject({
-      producer_request: description,
-      budget: Number(budget),
-      duration_days: Number(days),
-      location: location,
+    clearError();
+    setValidationMessage(null);
+
+    const briefText = description.trim();
+    if (briefText.length < 10) {
+      setValidationMessage('Shoot description must be at least 10 characters — the backend rejects anything shorter.');
+      return;
+    }
+
+    const endDate = addDaysIso(startDate, days);
+
+    const created = await createProduction({
+      brief_text: briefText,
+      budget_cap: budget.toFixed(2),
+      location,
+      start_date: startDate,
+      end_date: endDate,
     });
-    router.push('/processing');
+
+    if (created) {
+      router.push('/processing');
+    }
   };
+
+  const errorMessage = error
+    ? isApiError(error)
+      ? error.detail || error.message
+      : error.message
+    : null;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-ink-bg">
@@ -105,10 +144,11 @@ function IntakeFormContent() {
               </div>
             </div>
           </div>
-          <div className="glass flex items-center gap-2 rounded-full px-3.5 py-1.5 border border-greenx/30">
-            <span className="h-1.5 w-1.5 rounded-full bg-greenx animate-pulse-dot" />
-            <span className="mono text-[10px] font-medium text-greenx">5 AGENTS ONLINE</span>
-          </div>
+          {/* Was a hardcoded "5 AGENTS ONLINE" badge that was never backed by a
+              check - it rendered green whether or not a single agent was up.
+              IntegrationStatus reports real per-agent MCP reachability from
+              GET /healthz. */}
+          <IntegrationStatus className="shrink-0" />
         </header>
 
         {/* Hero */}
@@ -123,7 +163,7 @@ function IntakeFormContent() {
             <span className="text-amberx text-glow-amber">The 5 AI agents handle the rest.</span>
           </h1>
           <p className="mt-3.5 max-w-xl text-[13.5px] leading-relaxed text-ink-text-secondary">
-            Enter your custom shoot brief in natural language. Five specialized AI agents will dynamically extract specifications, scout verified vendors, negotiate prices, check compliance, and stand by for emergency recovery.
+            Enter your custom shoot brief in natural language. Five specialized AI agents will dynamically extract specifications, scout verified vendors, negotiate prices, check compliance, and stand by for emergency recovery — autonomously, once you submit.
           </p>
         </div>
 
@@ -160,10 +200,11 @@ function IntakeFormContent() {
               className="w-full resize-none rounded-xl border border-ink-border bg-ink-surface/60 px-4 py-3 text-[13px] leading-relaxed text-ink-text-primary placeholder:text-ink-text-tertiary focus:border-amberx/40 focus:outline-none focus:ring-2 focus:ring-amberx/15 transition-all"
               placeholder="Describe what you want to shoot — scene types, lighting conditions, cameras, gimbal, drone, special constraints…"
               required
+              minLength={10}
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="mono mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-ink-text-tertiary">
                 Budget Cap (₹)
@@ -176,6 +217,7 @@ function IntakeFormContent() {
                   onChange={(e) => setBudget(Number(e.target.value))}
                   className="mono w-full rounded-xl border border-ink-border bg-ink-surface/60 py-2.5 pl-9 pr-3 text-[14px] font-bold text-ink-text-primary focus:border-amberx/40 focus:outline-none transition-all"
                   required
+                  min={1}
                 />
               </div>
               <p className="mono mt-1 text-[10px] text-amberx">
@@ -205,6 +247,25 @@ function IntakeFormContent() {
 
             <div>
               <label className="mono mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-ink-text-tertiary">
+                Start Date
+              </label>
+              <div className="relative">
+                <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-text-tertiary" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="mono w-full rounded-xl border border-ink-border bg-ink-surface/60 py-2.5 pl-9 pr-3 text-[13px] font-bold text-ink-text-primary focus:border-amberx/40 focus:outline-none transition-all"
+                  required
+                />
+              </div>
+              <p className="mono mt-1 text-[10px] text-ink-text-tertiary truncate">
+                Wraps {addDaysIso(startDate, days)}
+              </p>
+            </div>
+
+            <div>
+              <label className="mono mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-ink-text-tertiary">
                 Location / Region
               </label>
               <div className="relative">
@@ -223,12 +284,19 @@ function IntakeFormContent() {
             </div>
           </div>
 
+          {(validationMessage || errorMessage) && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-redx/30 bg-redx/10 p-3.5 text-[12.5px] text-redx">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{validationMessage || errorMessage}</span>
+            </div>
+          )}
+
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isLoading}
             className="group flex w-full items-center justify-center gap-2 rounded-xl bg-amberx py-3.5 text-[14px] font-semibold text-ink-bg transition-all duration-300 hover:bg-amberx/90 hover:shadow-xl hover:shadow-amberx/25 hover:-translate-y-0.5 disabled:opacity-50"
           >
-            {isSubmitting ? (
+            {isLoading ? (
               <span className="h-4 w-4 rounded-full border-2 border-ink-bg border-t-transparent animate-spin-slow" />
             ) : (
               <>

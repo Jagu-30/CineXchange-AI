@@ -1,173 +1,231 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useMission, formatINR } from '@/lib/mission-context';
+import { useMission, formatINR, parseMoney } from '@/lib/mission-context';
+import { apiClient, isAgentUnavailableError, isApiError, isConflictError } from '@/lib/api-client';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
 import { DemoBadge } from '@/components/shared/demo-badge';
-import type { RecoveryOption, Incident } from '@/lib/types';
+import { ApprovalCard } from '@/components/shared/approval-card';
+import type {
+  ApprovalDecisionResponse,
+  JsonObject,
+  ProductionApproval,
+  ProductionRecoveryEvent,
+  RecoveryOutcome,
+  RecoveryTimelineEntry,
+} from '@/lib/types';
 import {
   Siren,
   AlertTriangle,
   CheckCircle2,
   XCircle,
-  MapPin,
   Clock,
-  Star,
+  ArrowRight,
+  Search,
+  Handshake,
+  DollarSign,
+  CalendarClock,
   ShieldCheck,
   ShieldAlert,
-  ArrowRight,
-  Sparkles,
-  Zap,
+  Loader2,
   Play,
-  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+// Real step names from services/recovery_agent/main.py's STEP_NAMES, plus the
+// two extra names it appends outside the normal 1-7 sequence.
+const STEP_META: Record<string, { label: string; icon: any }> = {
+  find_replacement: { label: 'Find replacement', icon: Search },
+  negotiate_replacement: { label: 'Negotiate replacement', icon: Handshake },
+  recalculate_cost: { label: 'Recalculate cost', icon: DollarSign },
+  check_schedule: { label: 'Check schedule', icon: CalendarClock },
+  update_records: { label: 'Update records', icon: ShieldCheck },
+  present_diff: { label: 'Present diff', icon: ArrowRight },
+  approval_gate: { label: 'Approval gate', icon: ShieldAlert },
+  resolve: { label: 'Resolved', icon: CheckCircle2 },
+  failed: { label: 'Failed', icon: XCircle },
+};
+
+const EVENT_STATUS_THEME: Record<string, { text: string; bg: string; border: string }> = {
+  pending: { text: 'text-ink-text-secondary', bg: 'bg-ink-surface/60', border: 'border-ink-border' },
+  in_progress: { text: 'text-bluex', bg: 'bg-bluex/10', border: 'border-bluex/30' },
+  awaiting_approval: { text: 'text-amberx', bg: 'bg-amberx/10', border: 'border-amberx/30' },
+  resolved: { text: 'text-greenx', bg: 'bg-greenx/10', border: 'border-greenx/30' },
+  failed: { text: 'text-redx', bg: 'bg-redx/10', border: 'border-redx/30' },
+};
+
+/** `kind` is only ever populated from the audit payload; fall back to the
+ * `recovery:`-prefixed reason string the backend always writes for a recovery
+ * gate. See ProductionApproval.kind / .reason in lib/types.ts. */
+function isRecoveryApproval(a: ProductionApproval): boolean {
+  if (a.kind) return a.kind === 'recovery';
+  return a.reason?.startsWith('recovery:') ?? false;
+}
+
+function asObj(v: unknown): JsonObject | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as JsonObject) : null;
+}
+
+function formatSigned(value: unknown): string {
+  const n = parseMoney(typeof value === 'string' || typeof value === 'number' ? value : null);
+  if (n === null) return String(value);
+  const sign = n > 0 ? '+' : '';
+  return sign + formatINR(n);
+}
+
+function formatDetailValue(key: string, value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'string') {
+    if (/price|total|delta|amount/i.test(key) && /^-?\d+(\.\d+)?$/.test(value)) {
+      return formatSigned(value);
+    }
+    return value || '—';
+  }
+  if (typeof value === 'number') {
+    return /price|total|delta|amount/i.test(key) ? formatSigned(value) : String(value);
+  }
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '(none)';
+    return value.map((v) => (typeof v === 'string' ? v : JSON.stringify(v))).join(', ');
+  }
+  return JSON.stringify(value);
+}
+
+function outcomeMessage(outcome: RecoveryOutcome): string {
+  switch (outcome) {
+    case 'resolved':
+      return 'Recovery resolved — the replacement booking is confirmed.';
+    case 'awaiting_approval':
+      return 'The recovery ran and is now waiting on the producer approval below.';
+    case 'failed':
+      return 'The recovery failed. See the timeline below for the reason.';
+    case 'already_in_progress':
+      return 'A recovery is already in progress for this production.';
+    default:
+      return 'Recovery triggered.';
+  }
+}
+
+function DetailFields({ detail }: { detail: JsonObject }) {
+  const entries = Object.entries(detail || {});
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2.5">
+      {entries.map(([key, value]) => {
+        const nested = asObj(value);
+        if (nested) {
+          return (
+            <div key={key} className="p-2.5 rounded-lg bg-ink-surface/70 border border-ink-border sm:col-span-2">
+              <span className="mono text-[9.5px] uppercase tracking-wider text-ink-text-tertiary block mb-1">
+                {key.replace(/_/g, ' ')}
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {Object.entries(nested).map(([k, v]) => (
+                  <div key={k} className="text-[11.5px]">
+                    <span className="text-ink-text-tertiary">{k.replace(/_/g, ' ')}: </span>
+                    <span className="text-ink-text-primary font-medium">{formatDetailValue(k, v)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={key} className="p-2.5 rounded-lg bg-ink-surface/70 border border-ink-border">
+            <span className="mono text-[9.5px] uppercase tracking-wider text-ink-text-tertiary block mb-0.5">
+              {key.replace(/_/g, ' ')}
+            </span>
+            <span className="text-[12px] text-ink-text-primary font-medium">{formatDetailValue(key, value)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RecoveryPageContent() {
-  const router = useRouter();
-  const {
-    productionState,
-    triggerIncident,
-    runRecovery,
-    approveRecovery,
-  } = useMission();
+  const { productionId, status, detail, pendingApprovalId, refreshStatus, refreshDetail, isLoading } =
+    useMission();
 
-  const [simulating, setSimulating] = useState(false);
-  const [approving, setApproving] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [triggerNote, setTriggerNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
 
-  const incidents: Incident[] = productionState?.incidents || [];
-  const latestIncident = incidents[0] || {
-    incident_id: 'INC-001',
-    event: 'RESOURCE_UNAVAILABLE',
-    resource_id: 'CAM-001',
-    occurred_at: new Date().toISOString(),
-    severity: 'HIGH',
-    details: { message: 'ARRI Alexa Mini LF reported sensor failure at camera position A' },
+  const events: ProductionRecoveryEvent[] = detail?.recovery_events ?? [];
+  const latestEvent =
+    [...events].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+  const timeline: RecoveryTimelineEntry[] = latestEvent?.timeline ?? [];
+
+  const affectedBooking = latestEvent?.affected_booking_id
+    ? detail?.bookings.find((b) => b.booking_id === latestEvent.affected_booking_id) ?? null
+    : null;
+
+  const diffEntry = timeline.find((e) => e.name === 'present_diff') ?? null;
+  const diffDetail = diffEntry ? asObj(diffEntry.detail) : null;
+  const oldSide = diffDetail ? asObj(diffDetail.old) : null;
+  const newSide = diffDetail ? asObj(diffDetail.new) : null;
+  const scheduleCollisions =
+    diffDetail && Array.isArray(diffDetail.schedule_collisions)
+      ? (diffDetail.schedule_collisions as unknown[])
+      : [];
+
+  const approvals = detail?.approvals ?? [];
+  const recoveryApprovals = approvals.filter(isRecoveryApproval);
+  const approval: ProductionApproval | null =
+    recoveryApprovals.find((a) => a.approval_id === pendingApprovalId) ??
+    [...recoveryApprovals].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ??
+    null;
+
+  const recoveryOptionsUnavailable = detail?.unavailable?.recovery_options ?? null;
+
+  const handleTrigger = async () => {
+    if (!productionId) return;
+    setTriggering(true);
+    setTriggerNote(null);
+    try {
+      const res = await apiClient.triggerRecovery(productionId, { trigger: 'vendor_unavailable' });
+      setTriggerNote({ kind: 'info', text: outcomeMessage(res.outcome) });
+      await Promise.all([refreshStatus(), refreshDetail()]);
+    } catch (err) {
+      if (isConflictError(err)) {
+        setTriggerNote({
+          kind: 'error',
+          text: 'No confirmed booking to recover yet — the pipeline needs to finish booking a vendor first.',
+        });
+      } else if (isAgentUnavailableError(err)) {
+        setTriggerNote({ kind: 'error', text: 'The recovery agent could not be reached. You can retry.' });
+      } else if (isApiError(err)) {
+        setTriggerNote({ kind: 'error', text: err.detail || err.message });
+      } else {
+        setTriggerNote({
+          kind: 'error',
+          text: err instanceof Error ? err.message : 'Could not trigger recovery.',
+        });
+      }
+    } finally {
+      setTriggering(false);
+    }
   };
 
-  const recoveryOptions: RecoveryOption[] = productionState?.recovery_options || [
-    {
-      candidate: {
-        vendor_id: 'V003',
-        vendor_name: 'ForestFrame Rentals',
-        resource_id: 'CAM-002',
-        resource_name: 'Sony FX9 Low-Light Dual-ISO Cinema Package',
-        resource_type: 'CAMERA',
-        price: 488000,
-        currency: 'INR',
-        available: true,
-        delivery_days: 0,
-        distance_km: 12,
-        reliability_score: 98.0,
-        suitability_score: 97.0,
-        quality_score: 95.0,
-        insurance_included: true,
-        insurance_required: true,
-        location: 'Agumbe Hub (12 km away)',
-        included_services: ['GM Master Primes', 'Rain Rigging', 'On-site Tech Support'],
-        specifications: { low_light: true, native_iso: 4000 },
-      },
-      compatibility_score: 30.0,
-      availability_score: 20.0,
-      schedule_score: 20.0,
-      cost_score: 13.0,
-      reliability_score: 9.8,
-      insurance_score: 5.0,
-      total_score: 97.8,
-      cost_delta: 8000,
-      schedule_delay_days: 0,
-      reasons: ['Low-light compatible (Dual Base ISO)', 'Available today', '12 km from location', 'Insurance included'],
-      risks: ['+₹8,000 cost delta over original line'],
-    },
-    {
-      candidate: {
-        vendor_id: 'V005',
-        vendor_name: 'CheapGear QuickRent',
-        resource_id: 'CAM-003',
-        resource_name: 'Blackmagic Cinema 6K Basic Rig',
-        resource_type: 'CAMERA',
-        price: 320000,
-        currency: 'INR',
-        available: true,
-        delivery_days: 2,
-        distance_km: 210,
-        reliability_score: 70.0,
-        suitability_score: 58.0,
-        quality_score: 72.0,
-        insurance_included: false,
-        insurance_required: true,
-        location: 'Hubballi',
-        included_services: ['Basic battery pack'],
-        specifications: { low_light: false },
-      },
-      compatibility_score: 12.0,
-      availability_score: 20.0,
-      schedule_score: 0.0,
-      cost_score: 15.0,
-      reliability_score: 7.0,
-      insurance_score: 0.0,
-      total_score: 54.0,
-      cost_delta: -160000,
-      schedule_delay_days: 2,
-      reasons: [],
-      risks: [
-        'Lacks low-light dual-ISO sensitivity',
-        '2 days delivery delay',
-        'No equipment insurance',
-      ],
-    },
-    {
-      candidate: {
-        vendor_id: 'V004',
-        vendor_name: 'CineCore Rentals',
-        resource_id: 'CAM-004',
-        resource_name: 'RED V-Raptor 8K VV Cinema Package',
-        resource_type: 'CAMERA',
-        price: 520000,
-        currency: 'INR',
-        available: false,
-        delivery_days: 1,
-        distance_km: 48,
-        reliability_score: 95.0,
-        suitability_score: 94.0,
-        quality_score: 96.0,
-        insurance_included: true,
-        insurance_required: true,
-        location: 'Udupi',
-        included_services: ['Cooke Primes'],
-        specifications: { low_light: true },
-      },
-      compatibility_score: 30.0,
-      availability_score: 0.0,
-      schedule_score: 10.0,
-      cost_score: 10.0,
-      reliability_score: 9.5,
-      insurance_score: 5.0,
-      total_score: 64.5,
-      cost_delta: 40000,
-      schedule_delay_days: 1,
-      reasons: ['Low-light compatible'],
-      risks: ['Currently booked on another production set (Unavailable)'],
-    },
-  ];
-
-  const topOption = recoveryOptions[0];
-  const isRecovered = productionState?.current_state === 'RECOVERY_APPROVED' || (productionState?.bookings || []).some(b => b.resource_id === 'CAM-002');
-
-  const handleSimulate = async () => {
-    setSimulating(true);
-    await triggerIncident('CAM-001', 'ARRI Alexa Mini LF sensor malfunction mid-shoot');
-    await runRecovery();
-    setSimulating(false);
+  const handleApprovalDecided = (_result: ApprovalDecisionResponse) => {
+    void refreshDetail();
   };
 
-  const handleApproveRecovery = async () => {
-    setApproving(true);
-    await approveRecovery(topOption?.candidate?.resource_id || 'CAM-002');
-    setApproving(false);
-  };
+  if (!productionId) {
+    return (
+      <div className="px-6 lg:px-10 py-8 max-w-[1500px] mx-auto space-y-8">
+        <div className="glass rounded-2xl p-10 text-center border-dashed border-ink-border">
+          <Siren className="h-8 w-8 text-ink-text-tertiary mx-auto mb-2 opacity-50" />
+          <div className="text-[14px] font-medium text-ink-text-secondary">No production selected</div>
+          <p className="text-[12px] text-ink-text-tertiary mt-1">
+            Start or select a production run before triggering an emergency recovery.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-6 lg:px-10 py-8 max-w-[1500px] mx-auto space-y-8">
@@ -176,29 +234,30 @@ function RecoveryPageContent() {
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
             <DemoBadge />
-            <span className="mono text-[10px] text-redx font-semibold">· Emergency Incident Response</span>
+            <span className="mono text-[10px] text-redx font-semibold">· Emergency Recovery</span>
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary flex items-center gap-2.5">
-            <Siren className="h-6 w-6 text-redx animate-pulse-dot" />
+            <Siren className="h-6 w-6 text-redx" />
             Emergency Recovery Center
           </h1>
           <p className="text-[13px] text-ink-text-secondary mt-1 max-w-2xl">
-            Autonomous re-sourcing and ranking when equipment fails mid-shoot. Weighs compatibility (30%), availability (20%), schedule impact (20%), cost (15%), and reliability (10%).
+            When a booked vendor drops out, the recovery agent re-sources a replacement, negotiates it,
+            recalculates cost, and waits for producer approval if the delta breaches the threshold.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <button
-            onClick={handleSimulate}
-            disabled={simulating}
+            onClick={handleTrigger}
+            disabled={triggering}
             className="flex items-center gap-2 rounded-xl border border-redx/30 bg-redx/10 px-5 py-2.5 text-[13px] font-semibold text-redx hover:bg-redx/20 transition-all disabled:opacity-50"
           >
-            {simulating ? (
-              <span className="h-4 w-4 rounded-full border-2 border-redx border-t-transparent animate-spin-slow" />
+            {triggering ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Play className="h-4 w-4" />
             )}
-            Trigger Camera Failure (CAM-001)
+            Trigger Recovery
           </button>
         </div>
       </header>
@@ -206,225 +265,170 @@ function RecoveryPageContent() {
       {/* Stepper */}
       <WorkflowStepper currentStep="Recovery" />
 
-      {/* Incident Banner */}
-      <div className="glass-strong rounded-2xl p-6 border border-redx/40 glow-alert flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
-        <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-redx/15 text-redx">
-            <AlertTriangle className="h-6 w-6" />
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-redx/20 text-redx">
-                SEVERITY: {latestIncident.severity}
-              </span>
-              <span className="mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                SOURCE: {latestIncident.details?.source || 'Grafana Cloud MCP (OnCall)'}
-              </span>
-              <span className="mono text-[11px] text-ink-text-tertiary">
-                Incident ID: <strong className="text-redx font-mono">{latestIncident.incident_id || 'INC-GRAFANA-001'}</strong>
-              </span>
-            </div>
-            <h2 className="text-[16px] font-bold text-ink-text-primary mt-1">
-              Active Incident: Booked Camera Unavailable (CAM-001)
-            </h2>
-            <p className="text-[12.5px] text-ink-text-secondary mt-0.5">
-              {latestIncident.details?.message || 'ARRI Alexa Mini LF sensor overheated and failed during rainforest night shoot in Agumbe.'}
-            </p>
-          </div>
-        </div>
-
-        <div className="glass rounded-xl p-4 border border-redx/30 shrink-0 text-right">
-          <div className="mono text-[10px] uppercase text-ink-text-tertiary">Schedule Impact Without Recovery</div>
-          <div className="mono text-[18px] font-bold text-redx mt-0.5">1-Day Production Delay</div>
-          <div className="text-[11px] text-ink-text-tertiary">~₹4.5L idle crew loss</div>
-        </div>
-      </div>
-
-      {/* Recovery Trade-Off Explanation Callout */}
-      {topOption && (
-        <div className="glass-strong rounded-2xl p-6 border border-amberx/30 glow-amber space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-amberx font-semibold text-[14px]">
-              <Sparkles className="h-4.5 w-4.5" />
-              Autonomous Agent Recovery Recommendation (Grafana Telemetry Triggered)
-            </div>
-            <span className="mono text-[10px] font-semibold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded border border-orange-500/20">
-              GRAFANA MCP RECOVERY
-            </span>
-          </div>
-          <p className="text-[13.5px] leading-relaxed text-ink-text-primary font-medium">
-            &ldquo;Grafana detected a critical incident affecting <span className="text-redx font-bold">CAM-001</span>. <span className="text-amberx font-bold">CAM-002</span> costs{' '}
-            <span className="text-amberx font-bold">+₹8,000 more</span>, but it is{' '}
-            <span className="text-greenx font-bold">12 km away</span>, <span className="text-greenx font-bold">available today</span>,{' '}
-            <span className="text-greenx font-bold">low-light compatible</span>, and causes{' '}
-            <span className="text-greenx font-bold">zero schedule delay</span>.&rdquo;
-          </p>
-          <div className="flex flex-wrap gap-4 pt-1 text-[11.5px] text-ink-text-secondary">
-            <span className="flex items-center gap-1 text-greenx">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Zero Schedule Delay
-            </span>
-            <span className="flex items-center gap-1 text-amberx">
-              <Clock className="h-3.5 w-3.5" /> 2-Hour Emergency Dispatch (12 km away)
-            </span>
-            <span className="flex items-center gap-1 text-greenx">
-              <ShieldCheck className="h-3.5 w-3.5" /> Dual-Base ISO 4000 (Low-Light)
-            </span>
-            <span className="flex items-center gap-1 text-orange-400">
-              <AlertTriangle className="h-3.5 w-3.5" /> Grafana OnCall Verified
-            </span>
-          </div>
+      {triggerNote && (
+        <div
+          className={cn(
+            'rounded-xl p-4 border flex items-start gap-2.5 text-[12.5px]',
+            triggerNote.kind === 'error'
+              ? 'border-redx/30 bg-redx/10 text-redx'
+              : 'border-amberx/30 bg-amberx/10 text-amberx',
+          )}
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>{triggerNote.text}</span>
         </div>
       )}
 
-      {/* Ranked Recovery Options Grid */}
-      <div className="space-y-4">
-        <h3 className="text-[16px] font-semibold text-ink-text-primary flex items-center gap-2">
-          <Zap className="h-4.5 w-4.5 text-amberx" />
-          Ranked Replacement Options ({recoveryOptions.length})
-        </h3>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {recoveryOptions.map((opt, i) => {
-            const cand = opt.candidate;
-            const isSelected = i === 0;
-            const isUnsuitable = opt.total_score < 70.0;
-
-            return (
-              <div
-                key={cand.resource_id}
-                className={cn(
-                  'glass card-hover rounded-2xl p-6 border transition-all flex flex-col justify-between space-y-5',
-                  isSelected
-                    ? 'border-amberx/40 glow-amber bg-amberx/5'
-                    : isUnsuitable
-                      ? 'border-redx/30 opacity-70'
-                      : 'border-ink-border',
-                )}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="mono text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-full bg-ink-surface text-ink-text-primary border border-ink-border">
-                      Rank #{i + 1} · {cand.resource_id}
-                    </span>
-                    {isSelected && (
-                      <span className="mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-amberx text-ink-bg">
-                        Top Recovery Choice
-                      </span>
-                    )}
-                  </div>
-
-                  <h4 className="text-[15px] font-bold text-ink-text-primary mt-2">
-                    {cand.resource_name}
-                  </h4>
-                  <div className="text-[12px] font-semibold text-ink-text-secondary">
-                    {cand.vendor_name}
-                  </div>
-
-                  <div className="mt-4 rounded-xl bg-ink-surface/70 p-3 border border-ink-border/60">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="mono text-[10px] uppercase tracking-wider text-ink-text-tertiary">Recovery Score:</span>
-                      <span className="mono text-[15px] font-bold text-amberx">{opt.total_score.toFixed(1)} / 100</span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-center text-[10.5px]">
-                      <div className="bg-ink-raised/50 p-1 rounded">
-                        <div className="mono text-[9px] text-ink-text-tertiary">Compat</div>
-                        <div className="mono font-bold text-ink-text-primary">{opt.compatibility_score.toFixed(1)}</div>
-                      </div>
-                      <div className="bg-ink-raised/50 p-1 rounded">
-                        <div className="mono text-[9px] text-ink-text-tertiary">Schedule</div>
-                        <div className="mono font-bold text-ink-text-primary">{opt.schedule_score.toFixed(1)}</div>
-                      </div>
-                      <div className="bg-ink-raised/50 p-1 rounded">
-                        <div className="mono text-[9px] text-ink-text-tertiary">Cost</div>
-                        <div className="mono font-bold text-ink-text-primary">{opt.cost_score.toFixed(1)}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Pricing and Delta */}
-                  <div className="mt-3.5 flex items-baseline justify-between border-b border-ink-border/50 pb-3">
-                    <div>
-                      <div className="mono text-[18px] font-bold text-ink-text-primary">{formatINR(cand.price)}</div>
-                      <div className="text-[10px] text-ink-text-tertiary">3-Day Rental</div>
-                    </div>
-                    <div className="text-right">
-                      <div className={cn('mono text-[13px] font-bold', opt.cost_delta > 0 ? 'text-amberx' : 'text-greenx')}>
-                        {opt.cost_delta > 0 ? `+${formatINR(opt.cost_delta)}` : formatINR(opt.cost_delta)}
-                      </div>
-                      <div className="text-[10px] text-ink-text-tertiary">Cost Delta vs Original</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 space-y-1 text-[11.5px]">
-                    <div className="flex items-center gap-1.5 text-ink-text-secondary">
-                      <MapPin className="h-3.5 w-3.5 text-ink-text-tertiary" />
-                      {cand.location || `${cand.distance_km} km away`}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-ink-text-secondary">
-                      <Clock className="h-3.5 w-3.5 text-ink-text-tertiary" />
-                      {opt.schedule_delay_days === 0 ? '0 Delay (Delivered Today)' : `${opt.schedule_delay_days} day delay`}
-                    </div>
-                  </div>
-
-                  {opt.reasons.length > 0 && (
-                    <div className="mt-3 space-y-1">
-                      {opt.reasons.map((r, idx) => (
-                        <div key={idx} className="flex items-center gap-1 text-[11px] text-greenx">
-                          <CheckCircle2 className="h-3 w-3 shrink-0" />
-                          <span>{r}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {opt.risks.length > 0 && (
-                    <div className="mt-2.5 rounded-lg bg-redx/10 p-2 border border-redx/25 space-y-0.5">
-                      {opt.risks.map((rk, idx) => (
-                        <div key={idx} className="flex items-start gap-1 text-[11px] text-redx">
-                          <XCircle className="h-3 w-3 shrink-0 mt-0.5" />
-                          <span>{rk}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  {isSelected ? (
-                    <button
-                      onClick={handleApproveRecovery}
-                      disabled={approving || isRecovered}
-                      className={cn(
-                        'w-full flex items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-semibold transition-all',
-                        isRecovered
-                          ? 'bg-greenx/20 text-greenx border border-greenx/30 cursor-default'
-                          : 'bg-greenx text-ink-bg hover:bg-greenx/90 shadow-lg shadow-greenx/20',
-                      )}
-                    >
-                      {approving ? (
-                        <span className="h-4 w-4 rounded-full border-2 border-ink-bg border-t-transparent animate-spin-slow" />
-                      ) : isRecovered ? (
-                        <CheckCircle2 className="h-4 w-4" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
-                      {isRecovered ? 'Recovery Approved & Dispatched' : 'Approve Replacement (+₹8,000 Delta)'}
-                    </button>
-                  ) : (
-                    <button
-                      disabled
-                      className="w-full rounded-xl border border-ink-border bg-ink-surface/40 py-2.5 text-[12px] font-semibold text-ink-text-tertiary cursor-not-allowed"
-                    >
-                      Non-Recommended Alternative
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+      {!latestEvent ? (
+        <div className="glass rounded-xl p-8 text-center border-dashed border-ink-border">
+          <Siren className="h-8 w-8 text-ink-text-tertiary mx-auto mb-2 opacity-50" />
+          <div className="text-[13px] font-medium text-ink-text-secondary">No recovery has run yet</div>
+          <p className="text-[11px] text-ink-text-tertiary mt-1">
+            {isLoading ? 'Loading production detail…' : 'Trigger a recovery above to see it here.'}
+          </p>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Incident Banner */}
+          <div
+            className={cn(
+              'glass-strong rounded-2xl p-6 border flex flex-col md:flex-row items-start md:items-center justify-between gap-5',
+              EVENT_STATUS_THEME[latestEvent.status]?.border || 'border-ink-border',
+            )}
+          >
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-redx/15 text-redx">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      'mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full',
+                      EVENT_STATUS_THEME[latestEvent.status]?.bg,
+                      EVENT_STATUS_THEME[latestEvent.status]?.text,
+                    )}
+                  >
+                    {latestEvent.status.replace(/_/g, ' ')}
+                  </span>
+                  <span className="mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-ink-surface text-ink-text-tertiary border border-ink-border">
+                    Trigger: {latestEvent.trigger}
+                  </span>
+                  <span className="mono text-[11px] text-ink-text-tertiary">
+                    Event: <strong className="text-ink-text-secondary font-mono">{latestEvent.recovery_event_id.slice(0, 8)}</strong>
+                  </span>
+                </div>
+                <h2 className="text-[16px] font-bold text-ink-text-primary mt-1">
+                  {affectedBooking?.vendor_name
+                    ? `Booked vendor unavailable: ${affectedBooking.vendor_name}`
+                    : 'Booked vendor unavailable'}
+                </h2>
+                <p className="text-[12.5px] text-ink-text-secondary mt-0.5 mono" suppressHydrationWarning>
+                  Opened {new Date(latestEvent.created_at).toLocaleString('en-IN', { hour12: false })}
+                  {events.length > 1 && ` · ${events.length} recovery events on this production`}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* What the recovery agent chose */}
+          <div className="glass-strong rounded-2xl p-6 border border-amberx/30 space-y-4">
+            <div className="flex items-center gap-2 text-amberx font-semibold text-[14px]">
+              <ArrowRight className="h-4.5 w-4.5" />
+              What the recovery agent chose
+            </div>
+
+            {oldSide && newSide ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl bg-redx/5 border border-redx/25 p-4">
+                  <div className="mono text-[9.5px] uppercase tracking-wider text-redx mb-1">Superseded</div>
+                  <div className="text-[14px] font-bold text-ink-text-primary">
+                    {typeof oldSide.vendor_name === 'string' ? oldSide.vendor_name : '—'}
+                  </div>
+                  <div className="mono text-[13px] text-ink-text-secondary mt-1">
+                    {formatDetailValue('price', oldSide.price)}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-greenx/5 border border-greenx/25 p-4">
+                  <div className="mono text-[9.5px] uppercase tracking-wider text-greenx mb-1">Replacement</div>
+                  <div className="text-[14px] font-bold text-ink-text-primary">
+                    {typeof newSide.vendor_name === 'string' ? newSide.vendor_name : '—'}
+                  </div>
+                  <div className="mono text-[13px] text-ink-text-secondary mt-1">
+                    {formatDetailValue('price', newSide.price)}
+                  </div>
+                </div>
+                <div className="md:col-span-2 flex items-center justify-between rounded-xl bg-ink-surface/70 border border-ink-border p-3">
+                  <span className="mono text-[10px] uppercase tracking-wider text-ink-text-tertiary">
+                    Cost delta vs. original
+                  </span>
+                  <span className="mono text-[15px] font-bold text-amberx">
+                    {formatDetailValue('delta', diffDetail?.delta)}
+                  </span>
+                </div>
+                {scheduleCollisions.length > 0 && (
+                  <div className="md:col-span-2 rounded-lg bg-redx/10 border border-redx/25 p-2.5 text-[11.5px] text-redx">
+                    Schedule collisions: {formatDetailValue('schedule_collisions', scheduleCollisions)}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-[12.5px] text-ink-text-secondary">
+                The recovery agent has not produced a replacement diff yet
+                {latestEvent.status === 'failed' ? ' — this recovery failed before reaching that step.' : '.'}{' '}
+                See the step-by-step timeline below for progress.
+              </p>
+            )}
+
+            {recoveryOptionsUnavailable && (
+              <p className="text-[11px] text-ink-text-tertiary border-t border-ink-border/50 pt-3">
+                {recoveryOptionsUnavailable}
+              </p>
+            )}
+          </div>
+
+          {/* Producer approval, if this recovery breached the threshold */}
+          {approval && <ApprovalCard approval={approval} onDecided={handleApprovalDecided} />}
+
+          {/* 7-step timeline */}
+          <div className="space-y-4">
+            <h3 className="text-[16px] font-semibold text-ink-text-primary flex items-center gap-2">
+              <Clock className="h-4.5 w-4.5 text-amberx" />
+              Recovery Timeline ({timeline.length} of 7 steps)
+            </h3>
+
+            <div className="space-y-3">
+              {timeline.map((entry, i) => {
+                const meta = STEP_META[entry.name] || { label: entry.name, icon: Clock };
+                const Icon = meta.icon;
+                return (
+                  <div
+                    key={`${entry.step}-${entry.name}-${i}`}
+                    className="glass rounded-xl p-4.5 border border-ink-border"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amberx/10 text-amberx">
+                          <Icon className="h-4.5 w-4.5" />
+                        </div>
+                        <div>
+                          <div className="text-[13px] font-semibold text-ink-text-primary">
+                            Step {entry.step} · {meta.label}
+                          </div>
+                          <div className="mono text-[10px] text-ink-text-tertiary" suppressHydrationWarning>
+                            {new Date(entry.ts).toLocaleString('en-IN', { hour12: false })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <DetailFields detail={entry.detail} />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

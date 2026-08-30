@@ -18,7 +18,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useMission } from '@/lib/mission-context';
+import { formatINR, useMission } from '@/lib/mission-context';
 import { DemoBadge } from './demo-badge';
 
 const MAIN_NAV = [
@@ -45,9 +45,7 @@ const SECONDARY_NAV = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { scenario, productionState } = useMission();
-
-  const currentState = productionState?.current_state || 'DRAFT';
+  const { productionId, status } = useMission();
 
   return (
     <aside className="hidden lg:flex w-[272px] shrink-0 flex-col border-r border-ink-border bg-ink-surface/85 backdrop-blur-xl">
@@ -169,31 +167,40 @@ export function Sidebar() {
         {/* Active Mission Card */}
         <div className="px-2">
           <div className="mono mb-2 text-[9px] uppercase tracking-[0.2em] text-ink-text-tertiary">
-            Active Shoot Plan
+            Active Production
           </div>
-          <div className="glass rounded-xl p-3.5 border border-ink-border">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="mono text-[9px] uppercase tracking-wider text-amberx font-semibold">
-                {currentState}
-              </span>
-              <span className="h-1.5 w-1.5 rounded-full bg-amberx animate-pulse-dot" />
+          {productionId && status ? (
+            <div className="glass rounded-xl p-3.5 border border-ink-border">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="mono text-[9px] uppercase tracking-wider text-amberx font-semibold">
+                  {status.status}
+                </span>
+                <span className="h-1.5 w-1.5 rounded-full bg-amberx animate-pulse-dot" />
+              </div>
+              <div className="mono text-[11.5px] font-medium leading-snug text-ink-text-primary truncate">
+                {productionId}
+              </div>
+              <div className="mono mt-1 text-[11px] text-ink-text-tertiary">
+                {status.total_cost != null
+                  ? `${formatINR(status.total_cost)} of ${formatINR(status.budget_cap)} cap`
+                  : `${formatINR(status.budget_cap)} cap`}
+                {' · Step '}
+                {status.current_step}/10
+              </div>
             </div>
-            <div className="text-[12.5px] font-medium leading-snug text-ink-text-primary truncate">
-              {scenario.title}
+          ) : (
+            <div className="glass rounded-xl p-3.5 border border-dashed border-ink-border">
+              <div className="text-[11.5px] text-ink-text-tertiary">No active production selected.</div>
             </div>
-            <div className="mono mt-1 text-[11px] text-ink-text-tertiary">
-              ₹25.00L · 3 Days
-            </div>
-          </div>
+          )}
         </div>
       </nav>
 
       {/* Footer */}
       <div className="border-t border-ink-border px-5 py-4 bg-ink-surface/50">
         <DemoBadge />
-        <div className="mono mt-2 text-[9px] text-ink-text-tertiary flex items-center justify-between">
-          <span>v1.0.0 · 5 AI Agents</span>
-          <span className="text-greenx">FASTAPI ONLINE</span>
+        <div className="mono mt-2 text-[9px] text-ink-text-tertiary">
+          <span>v1.0.0</span>
         </div>
       </div>
     </aside>

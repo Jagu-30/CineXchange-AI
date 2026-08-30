@@ -1,130 +1,186 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useMission, formatINR, formatINRLakh } from '@/lib/mission-context';
+import { useEffect } from 'react';
+import Link from 'next/link';
+import { useMission, formatINR } from '@/lib/mission-context';
 import { AppShell } from '@/components/shared/app-shell';
 import { WorkflowStepper } from '@/components/shared/workflow-stepper';
 import { DemoBadge } from '@/components/shared/demo-badge';
-import type { NegotiationState } from '@/lib/types';
+import type { ProductionRequirement } from '@/lib/types';
 import {
   Handshake,
-  TrendingDown,
-  ShieldCheck,
   ShieldAlert,
-  Clock,
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Send,
-  Sparkles,
-  ArrowRight,
-  HelpCircle,
-  FileCheck,
+  RotateCw,
+  Gauge,
+  Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-function NegotiationPageContent() {
-  const router = useRouter();
-  const {
-    productionState,
-    submitCounterOffer,
-    acceptOffer,
-    runCompliance,
-  } = useMission();
+function formatTimestamp(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
 
-  const negotiations: NegotiationState[] = productionState?.negotiations || [];
-  const activeNeg = negotiations[0] || {
-    negotiation_id: 'NEG-V003-CAM002',
-    vendor_id: 'V003',
-    resource_id: 'CAM-002',
-    initial_price: 480000,
-    current_price: 441600,
-    target_price: 441600,
-    minimum_price: 432000,
-    rounds: 1,
-    max_rounds: 3,
-    target_savings_percent: 8.0,
-    minimum_acceptable_quality: 85.0,
-    insurance_required: true,
-    max_delivery_days: 2,
-    status: 'IN_PROGRESS',
-    history: [
-      {
-        round_number: 1,
-        offered_by: 'VENDOR',
-        price: 480000,
-        savings_percent: 0.0,
-        included_terms: { insurance: true, delivery_days: 1 },
-        message: 'Initial 3-day cinema camera package quote with 2 primes: ₹4,80,000.',
-        accepted: false,
-        timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-      },
-      {
-        round_number: 1,
-        offered_by: 'PRODUCER',
-        price: 422400,
-        savings_percent: 12.0,
-        included_terms: { insurance: true, delivery_days: 1, warranty: true },
-        message: 'Producer proposes 12% discount for confirmed 3-day Agumbe shoot commitment.',
-        accepted: false,
-        timestamp: new Date(Date.now() - 1000 * 60 * 10).toISOString(),
-      },
-      {
-        round_number: 1,
-        offered_by: 'VENDOR',
-        price: 441600,
-        savings_percent: 8.0,
-        included_terms: { insurance: true, delivery_days: 1, on_site_tech: true },
-        message: 'Vendor agrees to 8% target discount at ₹4,41,600 with on-site technician & full transit insurance.',
-        accepted: true,
-        timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-      },
-    ],
-    reasoning: 'Negotiated 8% savings locked with mandatory transit insurance included.',
-  };
-
-  const [counterPriceInput, setCounterPriceInput] = useState<number>(
-    Math.round(activeNeg.current_price * 0.95),
+function DecisionBadge({ decision }: { decision: string | null }) {
+  if (!decision) return null;
+  const theme =
+    decision === 'accept'
+      ? { text: 'text-greenx', bg: 'bg-greenx/20', icon: CheckCircle2 }
+      : decision === 'reject'
+        ? { text: 'text-redx', bg: 'bg-redx/20', icon: XCircle }
+        : { text: 'text-bluex', bg: 'bg-bluex/20', icon: Handshake };
+  const Icon = theme.icon;
+  return (
+    <span className={cn('mono inline-flex items-center gap-1 text-[10px] uppercase font-bold px-2 py-0.5 rounded-full', theme.bg, theme.text)}>
+      <Icon className="h-3 w-3" />
+      {decision}
+    </span>
   );
-  const [loading, setLoading] = useState(false);
-  const [uninsuredTest, setUninsuredTest] = useState(false);
-  const [policyError, setPolicyError] = useState<string | null>(null);
+}
 
-  const initial = activeNeg.initial_price || 480000;
-  const current = activeNeg.current_price || 441600;
-  const savings = initial - current;
-  const savingsPercent = initial > 0 ? (savings / initial) * 100 : 0;
-  const isAccepted = activeNeg.status === 'ACCEPTED';
-  const isExhausted = activeNeg.rounds >= activeNeg.max_rounds;
+function RequirementTranscript({ requirement }: { requirement: ProductionRequirement }) {
+  const neg = requirement.negotiation;
+  const hasActivity =
+    neg.rounds.length > 0 || neg.terminal_events.length > 0 || neg.failures.length > 0;
 
-  const handleSubmitCounter = async () => {
-    setLoading(true);
-    setPolicyError(null);
-    try {
-      const terms = {
-        insurance: !uninsuredTest,
-        delivery_days: 1,
-        warranty: true,
-      };
-      const res = await submitCounterOffer(activeNeg.negotiation_id, Number(counterPriceInput), terms);
-      if (!res) {
-        setPolicyError('Policy rejection: Mandatory insurance is missing or counter terms are non-compliant.');
-      }
-    } catch (err: any) {
-      setPolicyError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (!hasActivity) return null;
 
-  const handleAccept = async () => {
-    setLoading(true);
-    await acceptOffer(activeNeg.negotiation_id);
-    await runCompliance();
-    setLoading(false);
-    router.push('/ai-planner/compliance');
-  };
+  return (
+    <div className="glass-strong rounded-2xl p-7 border border-ink-border space-y-5">
+      <div className="flex items-center justify-between border-b border-ink-border/50 pb-3 flex-wrap gap-2">
+        <h2 className="text-[15px] font-semibold text-ink-text-primary flex items-center gap-2">
+          <Handshake className="h-4.5 w-4.5 text-amberx" />
+          {requirement.category}
+        </h2>
+        <span className="mono text-[11px] text-ink-text-tertiary">
+          {requirement.requirement_id.slice(0, 8)} · {neg.rounds.length} round(s)
+        </span>
+      </div>
+
+      {/* Run summaries — real captured negotiation-run facts, not policy claims */}
+      {neg.runs.map((run, i) => {
+        const winner = run.winning_offer_id
+          ? requirement.offers.find((o) => o.offer_id === run.winning_offer_id)
+          : null;
+        return (
+          <div key={i} className="rounded-xl bg-ink-surface/50 border border-ink-border/60 p-3.5 text-[12px] text-ink-text-secondary flex flex-wrap gap-x-5 gap-y-1.5">
+            <span>Max rounds: <strong className="text-ink-text-primary">{run.max_rounds ?? '—'}</strong></span>
+            <span>Market anchor: <strong className="text-ink-text-primary">{run.market_anchor != null ? formatINR(run.market_anchor) : '—'}</strong></span>
+            <span>Settled: <strong className="text-ink-text-primary">{run.settled == null ? '—' : run.settled ? 'yes' : 'no'}</strong> ({run.settled_count ?? 0})</span>
+            {winner && (
+              <span className="flex items-center gap-1 text-amberx font-semibold">
+                <Trophy className="h-3.5 w-3.5" /> {winner.vendor_name ?? 'winner'} @ {formatINR(run.final_price)}
+              </span>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Chat transcript — every round, in order */}
+      <div className="space-y-4">
+        {neg.rounds.map((rnd, i) => (
+          <div key={i} className="space-y-2.5">
+            {/* Our negotiation agent's offer to the vendor */}
+            <div className="rounded-xl p-4 border bg-amberx/10 border-amberx/25 ml-6 flex flex-col space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-amberx text-ink-bg">
+                    Negotiation Agent · Round {rnd.round}
+                  </span>
+                </div>
+                <span className="mono text-[15px] font-bold text-ink-text-primary">{formatINR(rnd.offered)}</span>
+              </div>
+              {rnd.rationale && (
+                <p className="text-[12.5px] leading-relaxed text-ink-text-primary">{rnd.rationale}</p>
+              )}
+              {rnd.conceded_terms.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {rnd.conceded_terms.map((t) => (
+                    <span key={t} className="mono text-[10px] px-2 py-0.5 rounded bg-ink-surface text-ink-text-secondary border border-ink-border">
+                      conceded: {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Vendor's reply */}
+            <div className="rounded-xl p-4 border bg-ink-surface/70 border-ink-border mr-6 flex flex-col space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-ink-raised text-bluex">
+                    {rnd.vendor_name ?? 'Vendor'}
+                  </span>
+                  <DecisionBadge decision={rnd.decision} />
+                </div>
+                {rnd.vendor_price != null && (
+                  <span className="mono text-[15px] font-bold text-ink-text-primary">{formatINR(rnd.vendor_price)}</span>
+                )}
+              </div>
+              {rnd.vendor_message && (
+                <p className="text-[12.5px] leading-relaxed text-ink-text-primary">{rnd.vendor_message}</p>
+              )}
+              <span className="mono text-[10px] text-ink-text-tertiary" suppressHydrationWarning>
+                {formatTimestamp(rnd.ts)}
+              </span>
+            </div>
+          </div>
+        ))}
+
+        {/* Terminal events — walk-away / vendor unreachable */}
+        {neg.terminal_events.map((ev, i) => (
+          <div key={`term-${i}`} className="rounded-xl p-3.5 border border-redx/30 bg-redx/10 flex items-start gap-2.5 text-[12px] text-redx">
+            <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                {ev.event === 'negotiation_walk_away' ? 'Agent walked away' : 'Vendor unreachable'}
+                {ev.round != null && ` at round ${ev.round}`}
+              </div>
+              {(ev.rationale || ev.error) && <div className="mt-0.5">{ev.rationale ?? ev.error}</div>}
+            </div>
+          </div>
+        ))}
+
+        {/* Failures — the requirement-level negotiate call itself errored */}
+        {neg.failures.map((f, i) => (
+          <div key={`fail-${i}`} className="rounded-xl p-3.5 border border-redx/30 bg-redx/10 flex items-start gap-2.5 text-[12px] text-redx">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">Negotiation failed</div>
+              <div className="mt-0.5">
+                {f.error ?? 'Unknown error'} — {f.completed_offers ?? 0} offer(s), {f.completed_rounds ?? 0} round(s) completed first.
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NegotiationPageContent() {
+  const { productionId, detail, isLoading, refreshDetail } = useMission();
+
+  useEffect(() => {
+    if (productionId) refreshDetail();
+  }, [productionId, refreshDetail]);
+
+  const requirements = detail?.requirements ?? [];
+  const withNegotiation = requirements.filter(
+    (r) => r.negotiation.rounds.length > 0 || r.negotiation.terminal_events.length > 0 || r.negotiation.failures.length > 0,
+  );
+
+  const totalRounds = requirements.reduce((s, r) => s + r.negotiation.rounds.length, 0);
+  const totalSettled = requirements.reduce(
+    (s, r) => s + r.negotiation.runs.reduce((rs, run) => rs + (run.settled_count ?? 0), 0),
+    0,
+  );
 
   return (
     <div className="px-6 lg:px-10 py-8 max-w-[1500px] mx-auto space-y-8">
@@ -133,285 +189,85 @@ function NegotiationPageContent() {
         <div>
           <div className="flex items-center gap-2.5 mb-1.5">
             <DemoBadge />
-            <span className="mono text-[10px] text-ink-text-tertiary">· Negotiation Agent Workspace</span>
+            <span className="mono text-[10px] text-ink-text-tertiary">· Step 6: negotiate (read-only)</span>
           </div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink-text-primary flex items-center gap-2.5">
             <Handshake className="h-6 w-6 text-amberx" />
-            Vendor Negotiation & Package Optimization
+            Negotiation Transcript
           </h1>
           <p className="text-[13px] text-ink-text-secondary mt-1 max-w-2xl">
-            Simulated multi-round bargaining with ForestFrame Rentals. Deterministic policy enforces 8% target savings, quality &ge; 85, and strictly rejects uninsured packages.
+            The real round-by-round exchange between the negotiation agent and each vendor.
+            Negotiation runs autonomously — there is nothing to submit or accept here.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {isAccepted ? (
-            <button
-              onClick={() => router.push('/ai-planner/compliance')}
-              className="flex items-center gap-2 rounded-xl bg-greenx px-6 py-2.5 text-[13px] font-semibold text-ink-bg hover:bg-greenx/90 shadow-lg shadow-greenx/20 transition-all"
-            >
-              <ShieldCheck className="h-4 w-4" />
-              Proceed to Compliance & Risk Center
-            </button>
-          ) : (
-            <button
-              onClick={handleAccept}
-              disabled={loading}
-              className="flex items-center gap-2 rounded-xl bg-amberx px-6 py-2.5 text-[13px] font-semibold text-ink-bg hover:bg-amberx/90 shadow-lg shadow-amberx/20 transition-all disabled:opacity-50"
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              Accept Valid Package
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => refreshDetail()}
+          disabled={!productionId || isLoading}
+          className="flex items-center gap-2 rounded-xl border border-ink-border bg-ink-surface px-4 py-2.5 text-[13px] font-medium text-ink-text-secondary hover:text-ink-text-primary hover:border-ink-border-strong transition-all disabled:opacity-50"
+        >
+          <RotateCw className={cn('h-4 w-4', isLoading && 'animate-spin-slow')} />
+          Refresh
+        </button>
       </header>
 
       {/* Stepper */}
       <WorkflowStepper currentStep="Negotiate" />
 
-      {/* Stat Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="glass rounded-xl p-5 border border-ink-border">
-          <div className="mono text-[10px] uppercase tracking-wider text-ink-text-tertiary">Initial Quote</div>
-          <div className="mono text-[20px] font-bold text-ink-text-primary mt-1 line-through decoration-ink-border">
-            {formatINR(initial)}
-          </div>
-          <div className="text-[11px] text-ink-text-tertiary mt-0.5">List price</div>
+      {!productionId ? (
+        <div className="glass rounded-2xl p-8 border border-dashed border-ink-border text-center">
+          <p className="text-[13px] text-ink-text-secondary">
+            No production selected. Submit a brief on the{' '}
+            <Link href="/ai-planner" className="text-amberx hover:underline">
+              planner hub
+            </Link>{' '}
+            to start a run.
+          </p>
         </div>
-
-        <div className="glass rounded-xl p-5 border border-amberx/30 glow-amber">
-          <div className="mono text-[10px] uppercase tracking-wider text-amberx font-semibold">Current Best Offer</div>
-          <div className="mono text-[22px] font-bold text-amberx mt-1">
-            {formatINR(current)}
-          </div>
-          <div className="mono text-[11px] text-greenx mt-0.5">
-            -{savingsPercent.toFixed(1)}% savings locked
-          </div>
+      ) : withNegotiation.length === 0 ? (
+        <div className="glass rounded-2xl p-8 border border-dashed border-ink-border text-center">
+          <p className="text-[13px] text-ink-text-secondary">
+            No negotiation activity yet. This page populates once step 6 (negotiate) runs.
+          </p>
         </div>
-
-        <div className="glass rounded-xl p-5 border border-greenx/20">
-          <div className="mono text-[10px] uppercase tracking-wider text-ink-text-tertiary">Total Savings</div>
-          <div className="mono text-[20px] font-bold text-greenx mt-1 flex items-center gap-1">
-            <TrendingDown className="h-4 w-4" />
-            {formatINR(savings)}
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          <div className="xl:col-span-2 space-y-6">
+            {withNegotiation.map((requirement) => (
+              <RequirementTranscript key={requirement.requirement_id} requirement={requirement} />
+            ))}
           </div>
-          <div className="text-[11px] text-greenx mt-0.5">Within target 8% envelope</div>
-        </div>
 
-        <div className="glass rounded-xl p-5 border border-ink-border">
-          <div className="mono text-[10px] uppercase tracking-wider text-ink-text-tertiary">Negotiation Round</div>
-          <div className="mono text-[20px] font-bold text-ink-text-primary mt-1">
-            Round {activeNeg.rounds} / {activeNeg.max_rounds}
-          </div>
-          <div className="mono text-[11px] text-ink-text-secondary mt-0.5">
-            Status: <span className="font-bold text-amberx">{activeNeg.status}</span>
-          </div>
-        </div>
-      </div>
-
-      {policyError && (
-        <div className="glass rounded-xl p-4 border-redx/30 bg-redx/10 flex items-center gap-3 text-[13px] text-redx">
-          <ShieldAlert className="h-5 w-5 shrink-0" />
-          <div>
-            <div className="font-bold">Policy Constraint Violation</div>
-            <div>{policyError}</div>
+          {/* Real aggregate stats — replaces the old hardcoded policy panel */}
+          <div className="xl:col-span-1 space-y-6">
+            <div className="glass rounded-2xl p-6 border border-ink-border space-y-4">
+              <h3 className="text-[14px] font-semibold text-ink-text-primary flex items-center gap-2">
+                <Gauge className="h-4 w-4 text-amberx" />
+                Negotiation Activity
+              </h3>
+              <div className="space-y-2.5 text-[12px]">
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
+                  <span className="text-ink-text-secondary">Requirements negotiated</span>
+                  <span className="mono font-semibold text-ink-text-primary">{withNegotiation.length} / {requirements.length}</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
+                  <span className="text-ink-text-secondary">Total rounds</span>
+                  <span className="mono font-semibold text-ink-text-primary">{totalRounds}</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
+                  <span className="text-ink-text-secondary">Settled offers</span>
+                  <span className="mono font-semibold text-ink-text-primary">{totalSettled}</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-ink-text-tertiary leading-relaxed">
+                There is no exposed negotiation policy configuration (target savings %, insurance
+                rules, etc.) to display here — those are server-side settings, not part of this
+                production&apos;s read model. These numbers are computed from the real rounds above.
+              </p>
+            </div>
           </div>
         </div>
       )}
-
-      {/* Main Negotiation Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-        {/* Left 2 Cols: Dialogue History & Counter Generator */}
-        <div className="xl:col-span-2 space-y-6">
-          {/* Timeline dialogue */}
-          <div className="glass-strong rounded-2xl p-7 border border-ink-border space-y-5">
-            <div className="flex items-center justify-between border-b border-ink-border/50 pb-3">
-              <h2 className="text-[16px] font-semibold text-ink-text-primary flex items-center gap-2">
-                <Handshake className="h-4.5 w-4.5 text-amberx" />
-                Negotiation Exchange History
-              </h2>
-              <span className="mono text-[11px] text-ink-text-tertiary">
-                Vendor: {activeNeg.vendor_id} · Resource: {activeNeg.resource_id}
-              </span>
-            </div>
-
-            <div className="space-y-4">
-              {(activeNeg.history || []).map((rnd, i) => {
-                const isProducer = rnd.offered_by === 'PRODUCER';
-                return (
-                  <div
-                    key={i}
-                    className={cn(
-                      'rounded-xl p-4 border transition-all flex flex-col space-y-2',
-                      isProducer
-                        ? 'bg-amberx/10 border-amberx/25 ml-6'
-                        : 'bg-ink-surface/70 border-ink-border mr-6',
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={cn(
-                            'mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full',
-                            isProducer ? 'bg-amberx text-ink-bg' : 'bg-ink-raised text-bluex',
-                          )}
-                        >
-                          {rnd.offered_by} · Round {rnd.round_number}
-                        </span>
-                        {rnd.accepted && (
-                          <span className="mono text-[10px] bg-greenx/20 text-greenx px-2 py-0.5 rounded-full font-bold">
-                            Agreed
-                          </span>
-                        )}
-                      </div>
-                      <span className="mono text-[15px] font-bold text-ink-text-primary">
-                        {formatINR(rnd.price)}
-                      </span>
-                    </div>
-
-                    <p className="text-[12.5px] leading-relaxed text-ink-text-primary">
-                      {rnd.message}
-                    </p>
-
-                    {rnd.included_terms && Object.keys(rnd.included_terms).length > 0 && (
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {Object.entries(rnd.included_terms).map(([k, v]) => (
-                          <span
-                            key={k}
-                            className="mono text-[10px] px-2 py-0.5 rounded bg-ink-surface text-ink-text-secondary border border-ink-border"
-                          >
-                            {k}: {String(v)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Interactive Counter-Offer Panel */}
-          {!isAccepted && !isExhausted && (
-            <div className="glass rounded-2xl p-7 border border-amberx/30 space-y-5">
-              <h3 className="text-[15px] font-semibold text-ink-text-primary flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-amberx" />
-                Submit Counter-Offer (Round {activeNeg.rounds + 1} of {activeNeg.max_rounds})
-              </h3>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="mono block text-[10px] uppercase tracking-wider text-ink-text-tertiary mb-1.5">
-                    Proposed Counter Price (₹)
-                  </label>
-                  <input
-                    type="number"
-                    value={counterPriceInput}
-                    onChange={(e) => setCounterPriceInput(Number(e.target.value))}
-                    className="mono w-full rounded-xl border border-ink-border bg-ink-surface px-4 py-2.5 text-[15px] font-bold text-ink-text-primary focus:border-amberx/40 focus:outline-none"
-                  />
-                  <p className="mono text-[10px] text-ink-text-tertiary mt-1">
-                    Target ceiling: {formatINR(activeNeg.target_price)}
-                  </p>
-                </div>
-
-                <div className="flex flex-col justify-end">
-                  <label className="flex items-center gap-2 p-3 glass rounded-xl border border-ink-border cursor-pointer hover:border-ink-border-strong">
-                    <input
-                      type="checkbox"
-                      checked={uninsuredTest}
-                      onChange={(e) => setUninsuredTest(e.target.checked)}
-                      className="rounded border-ink-border text-amberx focus:ring-0"
-                    />
-                    <span className="text-[12px] text-ink-text-secondary">
-                      Simulate cheap uninsured package (Policy Test)
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 pt-2">
-                <button
-                  onClick={handleSubmitCounter}
-                  disabled={loading}
-                  className="flex items-center gap-2 rounded-xl bg-amberx px-6 py-3 text-[13px] font-semibold text-ink-bg hover:bg-amberx/90 shadow-lg shadow-amberx/20 transition-all disabled:opacity-50"
-                >
-                  {loading ? (
-                    <span className="h-4 w-4 rounded-full border-2 border-ink-bg border-t-transparent animate-spin-slow" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  Submit Counter-Offer
-                </button>
-
-                <button
-                  onClick={handleAccept}
-                  disabled={loading}
-                  className="flex items-center gap-2 rounded-xl border border-ink-border bg-ink-surface px-5 py-3 text-[13px] font-semibold text-greenx hover:bg-greenx/10 hover:border-greenx/30 transition-all"
-                >
-                  <CheckCircle2 className="h-4 w-4 text-greenx" />
-                  Accept Current Offer ({formatINR(current)})
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Col: Deterministic Negotiation Policy Details */}
-        <div className="xl:col-span-1 space-y-6">
-          <div className="glass rounded-2xl p-6 border border-ink-border space-y-4">
-            <h3 className="text-[14px] font-semibold text-ink-text-primary flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-greenx" />
-              Negotiation Policy Rules
-            </h3>
-            <p className="text-[11.5px] text-ink-text-secondary leading-relaxed">
-              Deterministic Python guardrails govern every counter-offer:
-            </p>
-
-            <div className="space-y-2.5 text-[12px]">
-              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
-                <CheckCircle2 className="h-4 w-4 text-greenx shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-semibold text-ink-text-primary">Target Savings: 8.0%</div>
-                  <div className="text-[11px] text-ink-text-tertiary">
-                    Target rate ₹{formatINR(activeNeg.target_price)} locks optimal budget efficiency.
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
-                <CheckCircle2 className="h-4 w-4 text-greenx shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-semibold text-ink-text-primary">Mandatory Insurance</div>
-                  <div className="text-[11px] text-ink-text-tertiary">
-                    Offers lacking insurance are strictly REJECTED regardless of price.
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
-                <CheckCircle2 className="h-4 w-4 text-greenx shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-semibold text-ink-text-primary">Quality Standard: &ge; 85</div>
-                  <div className="text-[11px] text-ink-text-tertiary">
-                    Minimum cinema sensor ISO and glass MTF rating must be preserved.
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-ink-surface/60 border border-ink-border">
-                <CheckCircle2 className="h-4 w-4 text-greenx shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-semibold text-ink-text-primary">Max 3 Rounds</div>
-                  <div className="text-[11px] text-ink-text-tertiary">
-                    Prevents deadlocks. Escalates to producer if no concession by Round 3.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
