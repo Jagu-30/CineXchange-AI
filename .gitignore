@@ -53,3 +53,4 @@ env/
 .superpowers/
 .last_production_id
 typecheck_out.txt
+video/
