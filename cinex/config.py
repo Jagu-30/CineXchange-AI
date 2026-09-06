@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # the burst and the retry budget when the provider answers 429/503.
     llm_max_concurrency: int = 4
     llm_max_attempts: int = 4
+    # Requests-per-minute ceiling. The Gemini free tier measured 5 rpm for
+    # gemini-3.6-flash; 0 disables pacing for a paid key or Vertex.
+    llm_max_rpm: int = 0
     insurance_rider_threshold: Decimal = Decimal("50000")
 
     producer_agent_url: str = "http://producer-agent:8001/mcp"

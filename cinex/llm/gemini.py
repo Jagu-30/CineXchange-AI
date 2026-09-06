@@ -29,6 +29,36 @@ BACKOFF_BASE_S = 2.0
 BACKOFF_MAX_S = 32.0
 
 
+class _RateLimiter:
+    """Space calls so a burst never exceeds a requests-per-minute ceiling.
+
+    A semaphore bounds how many calls are IN FLIGHT; it does nothing about how
+    many are made per minute. Against the Gemini free tier - measured at 5 rpm
+    for gemini-3.6-flash - a run that fans out across ten requirements empties
+    the quota in seconds and then burns its whole retry budget losing to a limit
+    that backoff cannot outrun. This paces at the source instead.
+    """
+
+    def __init__(self, max_per_minute: int) -> None:
+        self._max = max_per_minute
+        self._times: list[float] = []
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        if self._max <= 0:
+            return
+        while True:
+            async with self._lock:
+                now = asyncio.get_running_loop().time()
+                self._times = [t for t in self._times if now - t < 60.0]
+                if len(self._times) < self._max:
+                    self._times.append(now)
+                    return
+                wait = 60.0 - (now - self._times[0]) + 0.05
+            log.info("llm_paced", extra={"sleep_s": round(wait, 1), "rpm_cap": self._max})
+            await asyncio.sleep(wait)
+
+
 class LLMError(Exception):
     """The model did not return something matching the requested schema."""
 
@@ -62,6 +92,7 @@ class GeminiClient:
         location: str | None = None,
         max_concurrency: int = 4,
         max_attempts: int = 4,
+        max_rpm: int = 0,
     ) -> None:
         if use_vertex:
             if not project or not location:
@@ -80,6 +111,8 @@ class GeminiClient:
         # Caps in-flight calls so the concurrent fan-out across requirements
         # does not arrive at the provider as one burst.
         self._gate = asyncio.Semaphore(max_concurrency)
+        # Bounds calls per minute, which the semaphore does not.
+        self._rate = _RateLimiter(max_rpm)
 
     @staticmethod
     def _status_of(exc: Exception) -> int | None:
@@ -96,6 +129,7 @@ class GeminiClient:
         last: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
+                await self._rate.acquire()
                 async with self._gate:
                     response = await asyncio.wait_for(
                         self._client.aio.models.generate_content(
@@ -165,4 +199,5 @@ def get_llm() -> GeminiClient:
         location=settings.gcp_location,
         max_concurrency=settings.llm_max_concurrency,
         max_attempts=settings.llm_max_attempts,
+        max_rpm=settings.llm_max_rpm,
     )
